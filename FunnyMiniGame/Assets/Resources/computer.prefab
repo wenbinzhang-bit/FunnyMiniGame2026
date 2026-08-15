@@ -173,6 +173,7 @@ MonoBehaviour:
   syncMode: 0
   syncInterval: 0
   WinningKpi: 99
+  PointsPerHoldTick: 1
   KpiPerHeldSecond: 1
   Body: {fileID: 3371433138481771201}
 --- !u!114 &1125357777356533851

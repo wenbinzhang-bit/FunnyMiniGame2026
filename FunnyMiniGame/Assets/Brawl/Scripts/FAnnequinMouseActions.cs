@@ -7,8 +7,8 @@ namespace Brawl
     /// </summary>
     public class FAnnequinMouseActions : MonoBehaviour
     {
-        [Tooltip("右键按住超过此时长后触发拾取（秒）")]
-        public float LongPressSeconds = 0.45f;
+        [Tooltip("右键按住超过此时长后开始持续尝试拾取（秒）")]
+        public float LongPressSeconds = 0.2f;
 
         public System.Action OnShortPressAttack;
         public System.Action OnLongPressGrab;

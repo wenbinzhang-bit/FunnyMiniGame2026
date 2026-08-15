@@ -465,7 +465,7 @@ namespace FIMSpace.RagdollAnimatorDemo
             RagdollHandler rag = FindRagdollIn( close, closeCount );
             Vector3 impactDirection = transform.forward + new Vector3( 0f, 0.33f, 0f );
 
-            if( rag != null )
+            if( rag != null && !IsNetworkedPlayerRagdoll( rag ) )
             {
                 if( HitAudio ) HitAudio.Play();
 
@@ -493,7 +493,7 @@ namespace FIMSpace.RagdollAnimatorDemo
             RagdollHandler rag = FindRagdollIn( close, closeCount );
             Vector3 impactDirection = Vector3.up;
 
-            if( rag != null )
+            if( rag != null && !IsNetworkedPlayerRagdoll( rag ) )
             {
                 if( HitAudio ) HitAudio.Play();
 
@@ -685,6 +685,12 @@ namespace FIMSpace.RagdollAnimatorDemo
             if( handler == null ) return null;
             if( Ragdoll != null && handler == Ragdoll.Settings ) return null;
             return handler;
+        }
+
+        static bool IsNetworkedPlayerRagdoll( RagdollHandler rag )
+        {
+            Transform root = rag != null ? rag.GetBaseTransform() : null;
+            return root != null && root.GetComponentInParent<FAnnequinMeleeVictim>() != null;
         }
 
         private List<RagdollHandler> detectedRagdolls = new List<RagdollHandler>();

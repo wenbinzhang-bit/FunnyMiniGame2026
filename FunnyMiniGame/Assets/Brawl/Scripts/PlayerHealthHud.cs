@@ -48,8 +48,11 @@ namespace Brawl
 
         void OnGUI()
         {
-            if (!NetworkClient.active && !NetworkServer.active) return;
+            // 已替换为 BrawlMatchHud 的 UGUI，不再使用 OnGUI。
+        }
 
+        void DisabledOnGUI()
+        {
             RefreshIfNeeded();
             cached.RemoveAll(p => p == null);
             if (cached.Count == 0) return;

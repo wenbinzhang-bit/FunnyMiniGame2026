@@ -165,6 +165,7 @@ namespace Brawl.EditorTools
             manager.playerSpawnMethod = PlayerSpawnMethod.RoundRobin;
 
             go.AddComponent<NetworkManagerHUD>();
+            go.AddComponent<BrawlNetworkHudAnchor>();
 
             GameObject saved = PrefabUtility.SaveAsPrefabAsset(go, NetworkPrefabPath);
             Object.DestroyImmediate(go);
@@ -214,7 +215,13 @@ namespace Brawl.EditorTools
             gm.AddComponent<NetworkIdentity>();
             var brawlGm = gm.AddComponent<BrawlGameManager>();
             brawlGm.SpectatorIsland = new Vector3(60f, 3f, 60f);
-            gm.AddComponent<PlayerHealthHud>();
+            brawlGm.RoundDurationSeconds = 60f;
+            brawlGm.HoldScoreInterval = 0.5f;
+            brawlGm.HoldScorePoints = 1;
+            brawlGm.RoundRestartDelay = 6f;
+            Canvas arenaCanvas = Object.FindObjectOfType<Canvas>();
+            if (arenaCanvas != null && arenaCanvas.GetComponentInChildren<BrawlMatchHud>(true) == null)
+                BrawlHudSetup.BuildUnderCanvas(arenaCanvas);
 
             // 全局物理设置
             new GameObject("Bootstrap").AddComponent<BrawlBootstrap>();
@@ -504,9 +511,15 @@ namespace Brawl.EditorTools
                 gm.AddComponent<NetworkIdentity>();
                 var brawlGm = gm.AddComponent<BrawlGameManager>();
                 brawlGm.SpectatorIsland = new Vector3(60f, 3f, 60f);
-                if (gm.GetComponent<PlayerHealthHud>() == null)
-                    gm.AddComponent<PlayerHealthHud>();
+                brawlGm.RoundDurationSeconds = 60f;
+                brawlGm.HoldScoreInterval = 0.5f;
+                brawlGm.HoldScorePoints = 1;
+                brawlGm.RoundRestartDelay = 6f;
             }
+
+            Canvas canvas = Object.FindObjectOfType<Canvas>();
+            if (canvas != null && canvas.GetComponentInChildren<BrawlMatchHud>(true) == null)
+                BrawlHudSetup.BuildUnderCanvas(canvas);
 
             if (Object.FindObjectOfType<NetworkStartPosition>() == null)
             {

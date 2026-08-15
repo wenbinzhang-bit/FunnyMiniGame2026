@@ -6,7 +6,11 @@
 # See: https://github.com/github/gitignore/tree/main/Global
 #
 .utmp/
-/[Ll]ibrary/
+# Unity 工程在 FunnyMiniGame/ 子目录，不能用根路径 /Library/
+[Ll]ibrary/
+[Tt]emp/
+[Uu]ser[Ss]ettings/
+FunnyMiniGame_AutoTest/
 /[Tt]emp/
 /[Oo]bj/
 /[Bb]uild/

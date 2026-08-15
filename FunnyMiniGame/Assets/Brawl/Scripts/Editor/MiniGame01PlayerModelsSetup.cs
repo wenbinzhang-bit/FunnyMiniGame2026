@@ -149,8 +149,9 @@ namespace Brawl.EditorTools
                 controller.HitVoiceClip = AssetDatabase.LoadAssetAtPath<AudioClip>(HitVoicePath);
                 controller.HitVoiceVolume = 0.9f;
                 controller.HitVoicePitchRange = new Vector2(0.96f, 1.04f);
-                controller.ComputerPickupRange = 2f;
-                controller.ComputerPickupAngle = 100f;
+                controller.ComputerPickupRange = 2.8f;
+                controller.ComputerPickupAngle = 160f;
+                controller.ComputerPickupPointBlank = 1.75f;
                 controller.ComputerPickupAnimationSeconds = 0.45f;
                 controller.ComputerHoldOffset = new Vector3(0f, 0.06f, 0.08f);
                 controller.ComputerHoldEuler = new Vector3(8f, 0f, 0f);

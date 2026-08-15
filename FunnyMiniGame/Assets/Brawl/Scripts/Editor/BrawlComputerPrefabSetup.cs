@@ -69,6 +69,7 @@ namespace Brawl.EditorTools
                 KpiComputerObjective objective = root.GetComponent<KpiComputerObjective>();
                 if (objective == null) objective = root.AddComponent<KpiComputerObjective>();
                 objective.WinningKpi = 99f;
+                objective.PointsPerHoldTick = 1;
                 objective.KpiPerHeldSecond = 1f;
                 objective.Body = body;
 
