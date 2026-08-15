@@ -5263,7 +5263,7 @@ MonoBehaviour:
   target: {fileID: 6790123655845520645}
   punchVoiceSource: {fileID: 5283564257054179533}
   punchVoiceClips:
-  - {fileID: 8300000, guid: 956c4c2f446a0df47acb7d94a57da7e9, type: 3}
+  - {fileID: 8300000, guid: c921fe3a2ae011e48a40984d69b7eb9e, type: 3}
   punchVoicePitchRange: {x: 0.96, y: 1.04}
 --- !u!82 &5283564257054179533
 AudioSource:

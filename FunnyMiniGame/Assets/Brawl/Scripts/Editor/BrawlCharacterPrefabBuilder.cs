@@ -20,7 +20,7 @@ namespace Brawl.EditorTools
         const string ControllerPath = "Assets/Brawl/Animations/AC_BrawlLaptop.overrideController";
         const string OutputFolder = "Assets/Brawl/Prefabs/Characters";
         const string CatalogPath = OutputFolder + "/BrawlCharacterCatalog.asset";
-        const string PunchSwingHitPath = "Assets/Brawl/Audio/PunchSwing_Hit.mp3";
+        const string PunchSwingHitPath = "Assets/Brawl/Audio/qunima.mp3";
 
         static readonly CharacterDefinition[] Characters =
         {
