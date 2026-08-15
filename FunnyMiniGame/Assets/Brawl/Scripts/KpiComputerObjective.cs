@@ -9,6 +9,7 @@ namespace Brawl
     [DisallowMultipleComponent]
     [RequireComponent(typeof(Rigidbody))]
     [RequireComponent(typeof(NetworkIdentity))]
+    [DefaultExecutionOrder(200)]
     public sealed class KpiComputerObjective : NetworkBehaviour
     {
         [Tooltip("达到这个工作量 KPI 的玩家获胜（旧规则，当前对局按倒计时排名）")]
@@ -27,6 +28,7 @@ namespace Brawl
         [SyncVar(hook = nameof(OnHolderNetIdChanged))] uint holderNetId;
 
         NetFAnnequinController serverHolder;
+        NetworkTransformReliable networkTransform;
         MaterialPropertyBlock pickupPropertyBlock;
         Vector3 spawnPosition;
         Quaternion spawnRotation;
@@ -67,6 +69,23 @@ namespace Brawl
         void OnHolderNetIdChanged(uint previousHolderNetId, uint newHolderNetId)
         {
             ApplyPickupPulse(newHolderNetId == 0u);
+            SetNetworkFollowEnabled(newHolderNetId == 0u);
+        }
+
+        void LateUpdate()
+        {
+            if (!IsHeld) return;
+
+            NetFAnnequinController holder = FindHolder();
+            if (holder == null) return;
+
+            holder.GetComputerHoldPose(out Vector3 holdPosition, out Quaternion holdRotation);
+            transform.SetPositionAndRotation(holdPosition, holdRotation);
+            if (Body != null)
+            {
+                Body.position = holdPosition;
+                Body.rotation = holdRotation;
+            }
         }
 
         [Server]
@@ -78,6 +97,7 @@ namespace Brawl
             serverHolder = holder;
             holderNetId = holder.netId;
             SetServerBodyHeld(true);
+            SetNetworkFollowEnabled(false);
             return true;
         }
 
@@ -100,6 +120,7 @@ namespace Brawl
 
             serverHolder = null;
             holderNetId = 0u;
+            SetNetworkFollowEnabled(true);
             ApplyLoosePose(position, velocity);
         }
 
@@ -108,6 +129,7 @@ namespace Brawl
         {
             serverHolder = null;
             holderNetId = 0u;
+            SetNetworkFollowEnabled(true);
             Vector3 pos = hasSpawnPose ? spawnPosition : transform.position;
             Quaternion rot = hasSpawnPose ? spawnRotation : transform.rotation;
             transform.SetPositionAndRotation(pos, rot);
@@ -188,9 +210,33 @@ namespace Brawl
                 ServerIgnoreCollisionsWith(player);
         }
 
+        NetFAnnequinController FindHolder()
+        {
+            if (serverHolder != null) return serverHolder;
+            if (holderNetId == 0u) return null;
+
+            foreach (NetFAnnequinController player in FindObjectsOfType<NetFAnnequinController>())
+            {
+                if (player != null && player.netId == holderNetId)
+                    return player;
+            }
+
+            return null;
+        }
+
+        void SetNetworkFollowEnabled(bool enabled)
+        {
+            if (networkTransform == null)
+                networkTransform = GetComponent<NetworkTransformReliable>();
+            if (networkTransform != null)
+                networkTransform.enabled = enabled;
+        }
+
         void ResolveBody()
         {
             if (Body == null) Body = GetComponent<Rigidbody>();
+            if (networkTransform == null)
+                networkTransform = GetComponent<NetworkTransformReliable>();
         }
 
         void ResolvePickupRenderers()

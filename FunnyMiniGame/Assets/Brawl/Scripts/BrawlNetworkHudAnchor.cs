@@ -14,7 +14,7 @@ namespace Brawl
         public Vector2 ScreenMargin = new Vector2(10f, 12f);
 
         [Tooltip("未连接时 Host/Client 按钮区域高度")]
-        public int DisconnectedHeight = 200;
+        public int DisconnectedHeight = 220;
 
         [Tooltip("已连接时状态区域高度")]
         public int ConnectedHeight = 96;

@@ -572,34 +572,93 @@ namespace Brawl
             }
         }
 
+        public void ServerBotSetMove(Vector3 worldDir, bool sprint = false)
+        {
+            if (!isServer) return;
+            if (!InputActive || Time.time < attackMovementLockedUntil)
+            {
+                pendingMove = Vector3.zero;
+                return;
+            }
+
+            worldDir.y = 0f;
+            pendingMove = worldDir.sqrMagnitude > 0.0001f ? Vector3.ClampMagnitude(worldDir, 1f) : Vector3.zero;
+            if (Mover == null) return;
+            Mover.MovementSpeed = sprint && Mover.HoldShiftForSpeed > 0f
+                ? Mover.HoldShiftForSpeed
+                : baseMoveSpeed;
+        }
+
+        public void ServerBotFace(Vector3 lookDir)
+        {
+            if (!isServer) return;
+            ServerFaceYaw(lookDir);
+        }
+
+        public void ServerBotPunch()
+        {
+            if (!isServer) return;
+            ServerExecutePunchOrThrow(0, transform.forward);
+        }
+
+        public bool ServerBotTryPickup()
+        {
+            if (!isServer || !InputActive) return false;
+            if (!ServerTryPickupComputer()) return false;
+            ServerFinishComputerPickupImmediate();
+            return true;
+        }
+
+        [Server]
+        void ServerFinishComputerPickupImmediate()
+        {
+            if (heldComputer == null) return;
+            if (computerPickupRoutine != null)
+            {
+                StopCoroutine(computerPickupRoutine);
+                computerPickupRoutine = null;
+            }
+
+            syncHoldingComputer = true;
+            FinishComputerPickupAnimation();
+            ApplyComputerHoldingPose(true);
+            ServerHoldComputerAtHands();
+            RpcFinishComputerPickup();
+        }
+
+        void ServerExecutePunchOrThrow(byte kind, Vector3 lookDir)
+        {
+            if (!InputActive || Hero == null) return;
+            if (IsHoldingComputer) return;
+            if (Hero.IsHoldingUp || Hero.IsThrowing || IsHoldingPlayer)
+            {
+                ServerStartThrow(lookDir);
+                return;
+            }
+
+            if (Time.time < attackLockedUntil) return;
+            float attackLockSeconds = kind == 0 ? PunchAnimationLockSeconds : UppercutAnimationLockSeconds;
+            float movementLockSeconds = kind == 0 ? PunchMovementLockSeconds : UppercutAnimationLockSeconds;
+            attackLockedUntil = Time.time + attackLockSeconds;
+            attackMovementLockedUntil = Time.time + movementLockSeconds;
+            StopMovementForAttack();
+
+            ServerFaceYaw(lookDir);
+            if (kind == 0) Hero.DoPunchF();
+            else Hero.DoPunchU();
+            RpcPlayClip(kind == 0 ? "Punch F" : "Punch U", 0);
+            ServerPunchPlayers(kind);
+
+            if (punchFallback != null) StopCoroutine(punchFallback);
+            punchFallback = StartCoroutine(PunchHitFallback(kind));
+        }
+
         [Command]
         void CmdPunchOrThrow(byte kind, Vector3 lookDir)
         {
             try
             {
-                if (!InputActive || Hero == null) return;
-                if (IsHoldingComputer) return;
-                if (Hero.IsHoldingUp || Hero.IsThrowing || IsHoldingPlayer)
-                {
-                    ServerStartThrow(lookDir);
-                    return;
-                }
-
-                if (Time.time < attackLockedUntil) return;
-                float attackLockSeconds = kind == 0 ? PunchAnimationLockSeconds : UppercutAnimationLockSeconds;
-                float movementLockSeconds = kind == 0 ? PunchMovementLockSeconds : UppercutAnimationLockSeconds;
-                attackLockedUntil = Time.time + attackLockSeconds;
-                attackMovementLockedUntil = Time.time + movementLockSeconds;
-                StopMovementForAttack();
-
-                ServerFaceYaw(lookDir);
-                if (kind == 0) Hero.DoPunchF();
-                else Hero.DoPunchU();
-                RpcPlayClip(kind == 0 ? "Punch F" : "Punch U", 0);
-                ServerPunchPlayers(kind);
-
-                if (punchFallback != null) StopCoroutine(punchFallback);
-                punchFallback = StartCoroutine(PunchHitFallback(kind));
+                ServerExecutePunchOrThrow(kind, lookDir);
             }
             catch (System.Exception e)
             {
@@ -1530,7 +1589,7 @@ namespace Brawl
             {
                 if (serverCatching && heldComputer == null && InputActive && !IsKnockedDown && !IsGrabbed)
                     ServerTryPickupComputer();
-                if (heldComputer != null && syncHoldingComputer)
+                if (heldComputer != null)
                     ServerHoldComputerAtHands();
                 if (heldPlayer != null)
                     ServerHoldPlayerAtHand();
@@ -1698,9 +1757,9 @@ namespace Brawl
         [Server]
         void ServerHoldComputerAtHands()
         {
-            if (heldComputer == null || !syncHoldingComputer)
+            if (heldComputer == null)
             {
-                if (heldComputer == null && syncHoldingComputer)
+                if (syncHoldingComputer)
                 {
                     syncHoldingComputer = false;
                     ApplyComputerHoldingPose(false);
@@ -1708,11 +1767,14 @@ namespace Brawl
                 return;
             }
 
+            if (!syncHoldingComputer)
+                syncHoldingComputer = true;
+
             GetComputerHoldPose(out Vector3 holdPosition, out Quaternion holdRotation);
             heldComputer.ServerMoveHeld(holdPosition, holdRotation);
         }
 
-        void GetComputerHoldPose(out Vector3 holdPosition, out Quaternion holdRotation)
+        public void GetComputerHoldPose(out Vector3 holdPosition, out Quaternion holdRotation)
         {
             Transform leftHand = null;
             Transform rightHand = Hero != null ? Hero.Hand : null;
@@ -1773,8 +1835,9 @@ namespace Brawl
             Vector3 horizontalForward = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
             if (horizontalForward.sqrMagnitude < 0.001f) horizontalForward = Vector3.forward;
             horizontalForward.Normalize();
+            GetComputerHoldPose(out Vector3 holdPosition, out _);
             Vector3 releasePosition = dropFromHands
-                ? computer.transform.position
+                ? holdPosition + horizontalForward * 0.25f
                 : transform.position + horizontalForward * ComputerDropForward + Vector3.up * 0.35f;
             Vector3 releaseVelocity = extraVelocity;
             if (Mover != null && Mover.Rigb != null && !Mover.Rigb.isKinematic)

@@ -1,3 +1,4 @@
+using System.Collections;
 using Mirror;
 using UnityEngine;
 
@@ -17,7 +18,10 @@ namespace Brawl
 
         public PlayerModels playerModels;
 
+        public int PendingBotCount { get; set; }
+
         int nextPlayerIndex;
+        bool pendingBotsSpawned;
 
         public override void Awake()
         {
@@ -30,6 +34,7 @@ namespace Brawl
         public override void OnStartServer()
         {
             nextPlayerIndex = 0;
+            pendingBotsSpawned = false;
             EnsurePlayerModels();
             ApplyFirstPrefabAsPlayerPrefab();
             RegisterPlayerModelPrefabs();
@@ -138,6 +143,9 @@ namespace Brawl
             Debug.Log($"BRAWL: 第{playerIndex + 1}个玩家 -> {prefab.name}");
             if (BrawlGameManager.Instance != null)
                 BrawlGameManager.Instance.ServerOnPlayerJoined(conn);
+
+            if (!pendingBotsSpawned && conn == NetworkServer.localConnection)
+                StartCoroutine(SpawnPendingBotsAfterHost());
         }
 
         public override void OnServerDisconnect(NetworkConnectionToClient conn)
@@ -146,6 +154,85 @@ namespace Brawl
                 BrawlGameManager.Instance.ServerOnPlayerLeft(conn);
 
             base.OnServerDisconnect(conn);
+        }
+
+        IEnumerator SpawnPendingBotsAfterHost()
+        {
+            yield return null;
+            yield return new WaitForSeconds(0.35f);
+            if (pendingBotsSpawned || !NetworkServer.active) yield break;
+            pendingBotsSpawned = true;
+
+            int count = Mathf.Clamp(PendingBotCount, 0, BrawlBotBrain.MaxBots);
+            if (count <= 0)
+            {
+                Debug.Log("BRAWL_BOT: skip count=0");
+                yield break;
+            }
+
+            SpawnBots(count);
+        }
+
+        public int SpawnBots(int count)
+        {
+            if (!NetworkServer.active) return 0;
+
+            int spawned = 0;
+            int want = Mathf.Clamp(count, 0, BrawlBotBrain.MaxBots);
+            for (int i = 0; i < want; i++)
+            {
+                if (BrawlBotBrain.AliveCount >= BrawlBotBrain.MaxBots) break;
+                if (!TrySpawnOneBot()) break;
+                spawned++;
+            }
+
+            Debug.Log($"BRAWL_BOT: spawned={spawned} alive={BrawlBotBrain.AliveCount}");
+            return spawned;
+        }
+
+        bool TrySpawnOneBot()
+        {
+            EnsurePlayerModels();
+            ApplyFirstPrefabAsPlayerPrefab();
+
+            int playerIndex = nextPlayerIndex++;
+            GameObject prefab = ResolvePlayerPrefab(playerIndex);
+            if (!CanSpawnForClients(prefab))
+            {
+                Debug.LogError("BrawlNetworkManager: 没有可用的 Bot 预制体");
+                return false;
+            }
+
+            Transform start = GetStartPosition();
+            Vector3 origin = start != null ? start.position : Vector3.up * 2f;
+            Vector3 offset = Quaternion.Euler(0f, 80f * playerIndex, 0f) * Vector3.forward * 2.4f;
+            Vector3 pos = origin + offset;
+            pos.y = origin.y + 1f;
+
+            GameObject bot = Instantiate(prefab, pos, Quaternion.LookRotation(-offset.normalized, Vector3.up));
+            bot.name = $"{prefab.name} [bot={playerIndex}]";
+
+            var mouse = bot.GetComponent<FAnnequinMouseActions>();
+            if (mouse != null) mouse.enabled = false;
+
+            NetworkServer.Spawn(bot);
+
+            var fan = bot.GetComponent<NetFAnnequinController>();
+            if (fan == null)
+            {
+                Debug.LogError("BrawlNetworkManager: Bot 预制体缺少 NetFAnnequinController");
+                NetworkServer.Destroy(bot);
+                return false;
+            }
+
+            fan.InputActive = true;
+            if (bot.GetComponent<BrawlBotBrain>() == null)
+                bot.AddComponent<BrawlBotBrain>();
+
+            if (BrawlGameManager.Instance != null)
+                BrawlGameManager.Instance.ServerOnBotJoined(fan);
+
+            return true;
         }
     }
 }

@@ -93,8 +93,27 @@ namespace Brawl
         }
 
         [Server]
+        public void ServerOnBotJoined(IBrawlPlayer motor)
+        {
+            if (motor == null || motor.Transform == null) return;
+            if (players.Exists(p => p.motor == motor)) return;
+
+            players.Add(new PlayerEntry { conn = null, motor = motor });
+            motor.InputActive = state != EState.RoundEnd;
+            if (motor.Attributes != null)
+                motor.Attributes.ServerResetHealth();
+
+            Transform start = NetworkManager.singleton != null
+                ? NetworkManager.singleton.GetStartPosition()
+                : null;
+            Vector3 pos = start != null ? start.position : motor.Transform.position;
+            motor.SpawnPosition = pos;
+        }
+
+        [Server]
         public void ServerOnPlayerLeft(NetworkConnectionToClient conn)
         {
+            if (conn == null) return;
             players.RemoveAll(p => p.conn == conn);
         }
 
