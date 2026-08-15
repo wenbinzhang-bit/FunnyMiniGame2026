@@ -150,7 +150,7 @@ namespace Brawl.EditorTools
                 controller.PunchAnimationLockSeconds = 1.25f;
                 controller.PunchMovementLockSeconds = 1.23f;
                 controller.UppercutAnimationLockSeconds = 0.8f;
-                controller.PunchHitRange = 2.4f;
+                controller.PunchHitRange = 2f;
                 controller.PunchHitAngle = 55f;
                 controller.PunchPointBlankRange = 0.55f;
                 controller.HitVoiceClip = AssetDatabase.LoadAssetAtPath<AudioClip>(HitVoicePath);

@@ -25,7 +25,7 @@ namespace Brawl
         [Min(0.1f)] public float UppercutAnimationLockSeconds = 0.8f;
 
         [Header("Player Punch Hit Detection")]
-        [Min(0.5f)] public float PunchHitRange = 2.4f;
+        [Min(0.5f)] public float PunchHitRange = 2f;
         [Range(10f, 120f)] public float PunchHitAngle = 55f;
         [Min(0f)] public float PunchPointBlankRange = 0.55f;
 
