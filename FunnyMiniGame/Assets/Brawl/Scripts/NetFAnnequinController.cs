@@ -115,6 +115,8 @@ namespace Brawl
         float localAttackInputLockedUntil = -1f;
         float localAttackMovementLockedUntil = -1f;
         float lastReceivedHitTime = -1f;
+        bool serverJumpAvailable = true;
+        bool serverLeftGroundSinceJump;
         bool serverCatching;
         KpiComputerObjective heldComputer;
         NetFAnnequinController heldPlayer;
@@ -133,6 +135,8 @@ namespace Brawl
         const float PunchHitDelay = 0.33f;
         const float UppercutHitDelay = 0.3f;
         const float HeartbeatInterval = 0.1f;
+        const float JumpLandingNormalMinY = 0.55f;
+        const float JumpLandingMaxUpwardSpeed = 0.5f;
         const byte BtnSprint = 1;
         const byte BtnCtrl = 2;
 
@@ -194,6 +198,7 @@ namespace Brawl
         public override void OnStartServer()
         {
             SpawnPosition = transform.position;
+            ResetServerJumpState();
             if (Mover != null && Mover.Rigb != null)
                 standingConstraints = Mover.Rigb.constraints;
 
@@ -361,6 +366,9 @@ namespace Brawl
         {
             bool attackMovementLocked = IsAttackMovementLocked();
 
+            if (isServer && !serverJumpAvailable && Mover != null && !Mover.isGrounded)
+                serverLeftGroundSinceJump = true;
+
             if ((isServer || (isLocalPlayer && !UsesServerPoseSync)) && Mover && Mover.enabled)
             {
                 Vector3 dir = InputActive && !attackMovementLocked ? pendingMove : Vector3.zero;
@@ -453,13 +461,56 @@ namespace Brawl
         {
             try
             {
-                if (!InputActive || Hero == null || Time.time < attackMovementLockedUntil) return;
+                if (!InputActive || Hero == null || Mover == null || Time.time < attackMovementLockedUntil) return;
+                if (!serverJumpAvailable || !Mover.isGrounded) return;
+
+                // 服务端在真正施加起跳前立即消耗本次跳跃，避免同一物理帧内的重复 Command
+                // 或短暂的 grounded 抖动再次触发向上速度。
+                serverJumpAvailable = false;
+                serverLeftGroundSinceJump = false;
                 Hero.DoJump();
+
+                // 引用异常或插件拒绝起跳时不应永久锁住玩家。
+                if (Mover.jumpRequest == 0f)
+                    ResetServerJumpState();
             }
             catch (System.Exception e)
             {
+                ResetServerJumpState();
                 Debug.LogWarning($"CmdJump: {e.Message}");
             }
+        }
+
+        void OnCollisionEnter(Collision collision)
+        {
+            ServerTryRestoreJump(collision);
+        }
+
+        void OnCollisionStay(Collision collision)
+        {
+            ServerTryRestoreJump(collision);
+        }
+
+        void ServerTryRestoreJump(Collision collision)
+        {
+            if (!isServer || serverJumpAvailable || !serverLeftGroundSinceJump) return;
+            if (collision == null || collision.collider == null || collision.collider.isTrigger) return;
+            if (collision.transform == transform || collision.transform.IsChildOf(transform)) return;
+            if (Mover == null || Mover.Rigb == null || Mover.Rigb.velocity.y > JumpLandingMaxUpwardSpeed) return;
+
+            for (int i = 0; i < collision.contactCount; i++)
+            {
+                if (collision.GetContact(i).normal.y < JumpLandingNormalMinY) continue;
+                ResetServerJumpState();
+                return;
+            }
+        }
+
+        [Server]
+        void ResetServerJumpState()
+        {
+            serverJumpAvailable = true;
+            serverLeftGroundSinceJump = false;
         }
 
         Vector3 GetLookDir()
@@ -1110,6 +1161,7 @@ namespace Brawl
 
             bool wasDown = IsKnockedDown;
             bool wasPhysicalRagdoll = physicalRagdollActive;
+            ResetServerJumpState();
             if (wasPhysicalRagdoll && Ragdoll != null && Ragdoll.Handler.WasInitialized
                 && Ragdoll.Handler.AnimatingMode != RagdollHandler.EAnimatingMode.Standing)
             {
