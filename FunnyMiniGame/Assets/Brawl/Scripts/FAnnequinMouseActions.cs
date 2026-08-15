@@ -3,57 +3,59 @@ using UnityEngine;
 namespace Brawl
 {
     /// <summary>
-    /// 左键按下立刻攻击,按住超过阈值再抓取。右键投掷。
+    /// 左键攻击；右键长按拾取，松开右键放下。
     /// </summary>
     public class FAnnequinMouseActions : MonoBehaviour
     {
-        [Tooltip("按住超过此时长再抓取(秒)")]
+        [Tooltip("右键按住超过此时长后触发拾取（秒）")]
         public float LongPressSeconds = 0.45f;
-
-        public int MouseButton = 0;
 
         public System.Action OnShortPressAttack;
         public System.Action OnLongPressGrab;
         public System.Action OnRightClickRelease;
 
-        bool holding;
-        bool grabFired;
+        public bool IsPickupButtonHeld => pickupButtonHeld;
+
+        bool pickupButtonHeld;
+        bool pickupFired;
         float holdTime;
 
         void Update()
         {
-            if (Input.GetMouseButtonDown(1))
-                OnRightClickRelease?.Invoke();
-
-            if (Input.GetMouseButtonDown(MouseButton))
-            {
-                holding = true;
-                grabFired = false;
-                holdTime = 0f;
+            if (Input.GetMouseButtonDown(0) && !pickupButtonHeld)
                 OnShortPressAttack?.Invoke();
+
+            if (Input.GetMouseButtonDown(1))
+            {
+                pickupButtonHeld = true;
+                pickupFired = false;
+                holdTime = 0f;
             }
 
-            if (!holding) return;
+            if (!pickupButtonHeld) return;
 
             holdTime += Time.deltaTime;
-            if (!grabFired && holdTime >= LongPressSeconds)
+            if (!pickupFired && holdTime >= LongPressSeconds)
             {
-                grabFired = true;
+                pickupFired = true;
                 OnLongPressGrab?.Invoke();
             }
 
-            if (Input.GetMouseButtonUp(MouseButton))
+            if (Input.GetMouseButtonUp(1))
             {
-                holding = false;
-                grabFired = false;
+                bool shouldRelease = pickupFired;
+                pickupButtonHeld = false;
+                pickupFired = false;
                 holdTime = 0f;
+                if (shouldRelease)
+                    OnRightClickRelease?.Invoke();
             }
         }
 
         public void CancelHold()
         {
-            holding = false;
-            grabFired = false;
+            pickupButtonHeld = false;
+            pickupFired = false;
             holdTime = 0f;
         }
     }

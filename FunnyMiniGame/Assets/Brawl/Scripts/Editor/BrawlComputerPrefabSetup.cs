@@ -1,5 +1,6 @@
 using System;
 using FIMSpace.RagdollAnimatorDemo;
+using Mirror;
 using UnityEditor;
 using UnityEngine;
 
@@ -11,15 +12,19 @@ namespace Brawl.EditorTools
         const string ComputerPrefabPath = "Assets/Resources/computer.prefab";
 
         [InitializeOnLoadMethod]
+        static void ScheduleAutoSetup()
+        {
+            EditorApplication.update -= AutoSetup;
+            EditorApplication.update += AutoSetup;
+        }
+
         static void AutoSetup()
         {
-            EditorApplication.delayCall += () =>
-            {
-                if (EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling)
-                    return;
+            if (EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling || EditorApplication.isUpdating)
+                return;
 
-                SetupComputerPrefab();
-            };
+            EditorApplication.update -= AutoSetup;
+            SetupComputerPrefab();
         }
 
         [MenuItem("Brawl/Setup KPI Computer Prefab")]
@@ -48,6 +53,15 @@ namespace Brawl.EditorTools
                 body.constraints = RigidbodyConstraints.None;
                 body.maxAngularVelocity = 25f;
 
+                NetworkIdentity identity = root.GetComponent<NetworkIdentity>();
+                if (identity == null) identity = root.AddComponent<NetworkIdentity>();
+                identity.serverOnly = false;
+
+                NetworkTransformReliable networkTransform = root.GetComponent<NetworkTransformReliable>();
+                if (networkTransform == null) networkTransform = root.AddComponent<NetworkTransformReliable>();
+                networkTransform.target = root.transform;
+                networkTransform.syncDirection = SyncDirection.ServerToClient;
+
                 ClayCatchable catchable = root.GetComponent<ClayCatchable>();
                 if (catchable == null) catchable = root.AddComponent<ClayCatchable>();
                 catchable.Moving = true;
@@ -60,12 +74,14 @@ namespace Brawl.EditorTools
 
                 EditorUtility.SetDirty(collider);
                 EditorUtility.SetDirty(body);
+                EditorUtility.SetDirty(identity);
+                EditorUtility.SetDirty(networkTransform);
                 EditorUtility.SetDirty(catchable);
                 EditorUtility.SetDirty(objective);
                 PrefabUtility.SaveAsPrefabAsset(root, ComputerPrefabPath);
                 AssetDatabase.SaveAssets();
 
-                Debug.Log("BRAWL_COMPUTER_SETUP: SUCCESS - Rigidbody, BoxCollider, ClayCatchable and KPI=99 configured.");
+                Debug.Log("BRAWL_COMPUTER_SETUP: SUCCESS - networked Rigidbody, pickup target and KPI=99 configured.");
             }
             finally
             {

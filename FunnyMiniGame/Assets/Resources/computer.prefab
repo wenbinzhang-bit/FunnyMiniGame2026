@@ -84,6 +84,12 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 47f6ebc817c282e498f4dd5a222e3f39, type: 3}
       insertIndex: -1
       addedObject: {fileID: 3371433138481771203}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 47f6ebc817c282e498f4dd5a222e3f39, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1125357777356533851}
+    - targetCorrespondingSourceObject: {fileID: 919132149155446097, guid: 47f6ebc817c282e498f4dd5a222e3f39, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 447745727304790824}
   m_SourcePrefab: {fileID: 100100000, guid: 47f6ebc817c282e498f4dd5a222e3f39, type: 3}
 --- !u!1 &5972474157300943614 stripped
 GameObject:
@@ -163,6 +169,64 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4e0d7debc6c54c0482a46e958d750add, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0
   WinningKpi: 99
   KpiPerHeldSecond: 1
   Body: {fileID: 3371433138481771201}
+--- !u!114 &1125357777356533851
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5972474157300943614}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9b91ecbcc199f4492b9a91e820070131, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  sceneId: 0
+  _assetId: 2800756400
+  serverOnly: 0
+  visibility: 0
+  hasSpawned: 0
+--- !u!114 &447745727304790824
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5972474157300943614}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8ff3ba0becae47b8b9381191598957c8, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0
+  target: {fileID: 6460885591548481604}
+  syncPosition: 1
+  syncRotation: 1
+  syncScale: 0
+  onlySyncOnChange: 1
+  compressRotation: 1
+  interpolatePosition: 1
+  interpolateRotation: 1
+  interpolateScale: 1
+  coordinateSpace: 0
+  timelineOffset: 1
+  showGizmos: 0
+  showOverlay: 0
+  overlayColor: {r: 0, g: 0, b: 0, a: 0.5}
+  onlySyncOnChangeCorrectionMultiplier: 2
+  rotationSensitivity: 0.01
+  positionPrecision: 0.01
+  scalePrecision: 0.01
+--- !u!4 &6460885591548481604 stripped
+Transform:
+  m_CorrespondingSourceObject: {fileID: -8679921383154817045, guid: 47f6ebc817c282e498f4dd5a222e3f39, type: 3}
+  m_PrefabInstance: {fileID: 6783287778857891759}
+  m_PrefabAsset: {fileID: 0}

@@ -208,7 +208,7 @@ namespace Brawl
             };
             hint.normal.textColor = new Color(1f, 1f, 1f, 0.85f);
             GUI.Label(new Rect(16, Screen.height - 168, 420, 152),
-                "W S A D : Movement\nSpace : Jump\nLeft Click : Punch\nHold Left Click : Grab\nRight Click : Throw\nTab : Capture Mouse",
+                "W S A D : Movement\nSpace : Jump\nLeft Click : Punch\nHold Right Click : Pick Up Laptop\nRelease Right Click : Put Down\nTab : Capture Mouse",
                 hint);
         }
     }
