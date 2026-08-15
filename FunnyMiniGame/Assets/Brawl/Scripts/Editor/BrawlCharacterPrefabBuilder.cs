@@ -17,7 +17,7 @@ namespace Brawl.EditorTools
     public static class BrawlCharacterPrefabBuilder
     {
         const string TestScenePath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/TestScene.unity";
-        const string ControllerPath = BrawlLaptopAnimatorSetup.ControllerPath;
+        const string ControllerPath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/Demos Assets/Additional Resources/AC_RagdollAnimator_Hero Puncher.controller";
         const string OutputFolder = "Assets/Brawl/Prefabs/Characters";
         const string CatalogPath = OutputFolder + "/BrawlCharacterCatalog.asset";
         const string PunchSwingHitPath = "Assets/Brawl/Audio/PunchSwing_Hit.mp3";
@@ -38,12 +38,9 @@ namespace Brawl.EditorTools
                 if (EditorApplication.isPlayingOrWillChangePlaymode || EditorApplication.isCompiling)
                     return;
 
-                RuntimeAnimatorController laptopController = BrawlLaptopAnimatorSetup.EnsureControllerAsset();
-
                 if (Characters.All(character => AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath(character)) != null)
                     && AssetDatabase.LoadAssetAtPath<BrawlCharacterCatalog>(CatalogPath) != null)
                 {
-                    BrawlLaptopAnimatorSetup.AssignToCharacterPrefabs(laptopController);
                     AssignPunchVoiceAudioToPrefabs();
                     AssignPunchVoiceAudioToLoadedSceneObjects();
                     ValidateBuiltPrefabs();
@@ -62,7 +59,7 @@ namespace Brawl.EditorTools
                 EnsureOutputFolder();
                 EnsureHumanoidImports();
 
-                RuntimeAnimatorController controller = BrawlLaptopAnimatorSetup.EnsureControllerAsset();
+                RuntimeAnimatorController controller = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(ControllerPath);
                 if (controller == null)
                     throw new InvalidOperationException($"攻击 Animator Controller 不存在: {ControllerPath}");
 
@@ -275,7 +272,7 @@ namespace Brawl.EditorTools
         [MenuItem("Brawl/Validate Four Demo Character Prefabs")]
         public static void ValidateBuiltPrefabs()
         {
-            RuntimeAnimatorController expectedController = BrawlLaptopAnimatorSetup.EnsureControllerAsset();
+            RuntimeAnimatorController expectedController = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(ControllerPath);
 
             foreach (CharacterDefinition character in Characters)
             {
