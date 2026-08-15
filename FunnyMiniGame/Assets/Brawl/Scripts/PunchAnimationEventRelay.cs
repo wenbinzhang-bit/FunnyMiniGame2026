@@ -4,8 +4,8 @@ using UnityEngine;
 namespace Brawl
 {
     /// <summary>
-    /// Receives punch Animation Events on a skinned character whose Animator lives
-    /// below the gameplay root, then forwards them to the original demo controller.
+    /// Receives the hero Animation Events on a skinned character whose Animator
+    /// lives below the gameplay root, then forwards them to the demo controller.
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class PunchAnimationEventRelay : MonoBehaviour
@@ -34,6 +34,18 @@ namespace Brawl
         {
             if (target != null)
                 target.EPunchUp();
+        }
+
+        public void EThrow()
+        {
+            if (target != null)
+                target.EThrow();
+        }
+
+        public void EPushForce()
+        {
+            if (target != null)
+                target.EPushForce();
         }
     }
 }
