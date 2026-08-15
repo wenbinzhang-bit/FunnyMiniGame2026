@@ -21,12 +21,17 @@ namespace Brawl
         [Min(0.01f)] public float KpiPerHeldSecond = 1f;
 
         public Rigidbody Body;
-        [SyncVar] uint holderNetId;
+        [Tooltip("使用拾取物闪烁材质的 Renderer；为空时会自动查找子物体")]
+        public Renderer[] PickupRenderers;
+
+        [SyncVar(hook = nameof(OnHolderNetIdChanged))] uint holderNetId;
 
         NetFAnnequinController serverHolder;
+        MaterialPropertyBlock pickupPropertyBlock;
         Vector3 spawnPosition;
         Quaternion spawnRotation;
         bool hasSpawnPose;
+        static readonly int PickupPulseEnabledId = Shader.PropertyToID("_PickupPulseEnabled");
 
         public uint HolderNetId => holderNetId;
         public bool IsHeld => holderNetId != 0u;
@@ -36,23 +41,32 @@ namespace Brawl
         public override void OnStartServer()
         {
             ResolveBody();
+            ResolvePickupRenderers();
             spawnPosition = transform.position;
             spawnRotation = transform.rotation;
             hasSpawnPose = true;
             serverHolder = null;
             holderNetId = 0u;
             SetServerBodyHeld(false);
+            ApplyPickupPulse(true);
         }
 
         public override void OnStartClient()
         {
             ResolveBody();
+            ResolvePickupRenderers();
+            ApplyPickupPulse(!IsHeld);
             if (isServer || Body == null) return;
 
             // 电脑物理由服务端模拟，纯客户端只回放 NetworkTransform。
             Body.isKinematic = true;
             Body.useGravity = false;
             Body.detectCollisions = false;
+        }
+
+        void OnHolderNetIdChanged(uint previousHolderNetId, uint newHolderNetId)
+        {
+            ApplyPickupPulse(newHolderNetId == 0u);
         }
 
         [Server]
@@ -179,14 +193,42 @@ namespace Brawl
             if (Body == null) Body = GetComponent<Rigidbody>();
         }
 
+        void ResolvePickupRenderers()
+        {
+            if (PickupRenderers == null || PickupRenderers.Length == 0)
+                PickupRenderers = GetComponentsInChildren<Renderer>(true);
+        }
+
+        void ApplyPickupPulse(bool enabled)
+        {
+            ResolvePickupRenderers();
+            if (PickupRenderers == null || PickupRenderers.Length == 0) return;
+
+            if (pickupPropertyBlock == null)
+                pickupPropertyBlock = new MaterialPropertyBlock();
+
+            float value = enabled ? 1f : 0f;
+            foreach (Renderer targetRenderer in PickupRenderers)
+            {
+                if (targetRenderer == null) continue;
+                targetRenderer.GetPropertyBlock(pickupPropertyBlock);
+                pickupPropertyBlock.SetFloat(PickupPulseEnabledId, value);
+                targetRenderer.SetPropertyBlock(pickupPropertyBlock);
+                pickupPropertyBlock.Clear();
+            }
+        }
+
         void Reset()
         {
             ResolveBody();
+            ResolvePickupRenderers();
         }
 
-        void OnValidate()
+        protected override void OnValidate()
         {
+            base.OnValidate();
             ResolveBody();
+            ResolvePickupRenderers();
         }
     }
 }

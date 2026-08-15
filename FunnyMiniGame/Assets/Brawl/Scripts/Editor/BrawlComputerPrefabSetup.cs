@@ -72,6 +72,7 @@ namespace Brawl.EditorTools
                 objective.PointsPerHoldTick = 1;
                 objective.KpiPerHeldSecond = 1f;
                 objective.Body = body;
+                objective.PickupRenderers = root.GetComponentsInChildren<Renderer>(true);
 
                 EditorUtility.SetDirty(collider);
                 EditorUtility.SetDirty(body);

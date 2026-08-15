@@ -1,0 +1,15 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!221 &22100000
+AnimatorOverrideController:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_Name: AC_BrawlLaptop
+  m_Controller: {fileID: 9100000, guid: 53ea28f91a55f6d4f9672445148df8dc, type: 2}
+  m_Clips:
+  - m_OriginalClip: {fileID: 7400000, guid: 724d37c9657c1ba4a8fd2b6ba0d0f666, type: 2}
+    m_OverrideClip: {fileID: 7400000, guid: 91afb4dc3f18e364b95e13a5b46af369, type: 2}
+  - m_OriginalClip: {fileID: 7400000, guid: d3be8b8fa8e707548ae722eff3f97cfc, type: 2}
+    m_OverrideClip: {fileID: 7400000, guid: 406c78530b19dff41b593fe571c4a24b, type: 2}
