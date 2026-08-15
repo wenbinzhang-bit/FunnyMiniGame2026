@@ -18,6 +18,7 @@ namespace Brawl.EditorTools
     {
         const string SessionKey = "Brawl.MiniGame01PlayerModelsSetup.RanV8AttackTiming";
         const string HitVoicePath = "Assets/Brawl/Resources/Audio/HitVoice_Ah.mp3";
+        const string LaptopAnimatorPath = "Assets/Brawl/Animations/AC_BrawlLaptop.overrideController";
         const string PuncherVictimPrefabPath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/Demos Assets/Prefabs/PR_PuncherVictim_Mannequin.prefab";
 
         static readonly string[] CharacterPrefabPaths =
@@ -100,13 +101,19 @@ namespace Brawl.EditorTools
                 Rigidbody body = root.GetComponent<Rigidbody>();
                 CapsuleCollider capsule = root.GetComponent<CapsuleCollider>();
                 Animator visualAnimator = hero != null ? hero.Mecanim : null;
+                RuntimeAnimatorController laptopAnimator =
+                    AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(LaptopAnimatorPath);
 
-                if (mover == null || hero == null || body == null || capsule == null || visualAnimator == null)
+                if (mover == null || hero == null || body == null || capsule == null || visualAnimator == null
+                    || laptopAnimator == null)
                     throw new InvalidOperationException($"角色缺少移动、攻击、刚体、胶囊体或外观 Animator: {prefabPath}");
                 if (visualAnimator.transform == root.transform)
                     throw new InvalidOperationException($"角色仍在使用根节点默认 Animator，没有绑定换皮模型: {prefabPath}");
 
                 mover.Mecanim = visualAnimator;
+                visualAnimator.runtimeAnimatorController = laptopAnimator;
+                visualAnimator.enabled = true;
+                visualAnimator.applyRootMotion = false;
                 mover.UpdateInput = false;
                 mover.DisableRootMotion = true;
                 hero.Mover = mover;
@@ -302,16 +309,22 @@ namespace Brawl.EditorTools
 
         static bool NeedsSetup()
         {
+            RuntimeAnimatorController expectedAnimator =
+                AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(LaptopAnimatorPath);
             GameObject[] expected = CharacterPrefabPaths
                 .Select(AssetDatabase.LoadAssetAtPath<GameObject>)
                 .ToArray();
 
             if (expected.Any(prefab => prefab == null)) return false;
+            if (expectedAnimator == null) return true;
             if (expected.Any(prefab => !HasPersistentNetworkAssetId(prefab.GetComponent<NetworkIdentity>())
                 || prefab.GetComponent<NetFAnnequinController>() == null
                 || prefab.GetComponent<RagdollAnimator2>() == null
                 || prefab.GetComponent<RagdollNetworkSync>() == null
-                || prefab.GetComponent<Demo_Ragd_Hero1>()?.Ragdoll == null)) return true;
+                || prefab.GetComponent<Demo_Ragd_Hero1>()?.Ragdoll == null
+                || prefab.GetComponent<Demo_Ragd_Hero1>()?.Mecanim == null
+                || !prefab.GetComponent<Demo_Ragd_Hero1>().Mecanim.enabled
+                || prefab.GetComponent<Demo_Ragd_Hero1>().Mecanim.runtimeAnimatorController != expectedAnimator)) return true;
 
             foreach (string modelsPath in PlayerModelsPaths)
             {
@@ -326,6 +339,8 @@ namespace Brawl.EditorTools
         [MenuItem("Brawl/Validate MiniGame 01 Player Models")]
         public static void ValidateConfiguration()
         {
+            RuntimeAnimatorController expectedAnimator =
+                AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(LaptopAnimatorPath);
             GameObject[] expected = CharacterPrefabPaths
                 .Select(AssetDatabase.LoadAssetAtPath<GameObject>)
                 .ToArray();
@@ -351,6 +366,8 @@ namespace Brawl.EditorTools
                     && ragdoll.Settings.ExtraFeatures.Count >= 7
                     && controller.Hero.Ragdoll == ragdoll
                     && controller.Mecanim.transform != prefab.transform
+                    && controller.Mecanim.enabled
+                    && controller.Mecanim.runtimeAnimatorController == expectedAnimator
                     && prefab.GetComponent<NetworkTransformReliable>() != null
                     && prefab.GetComponent<NetworkAnimator>() != null
                     && prefab.GetComponent<RagdollNetworkSync>() != null

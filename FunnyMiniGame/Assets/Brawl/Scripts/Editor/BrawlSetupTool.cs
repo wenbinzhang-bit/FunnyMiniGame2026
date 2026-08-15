@@ -31,7 +31,7 @@ namespace Brawl.EditorTools
         const string MiniGame01ScenePath = SceneDir + "/MiniGame_01.unity";
         const string PunchMinigameScenePath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/Ragdoll Animator 2 Demo - Punch Minigame.unity";
         const string FannequinFbxPath = "Assets/FImpossible Creations/Plugins - Shared/FBasic Assets/Models/Fannequin/FAnnequinV2.fbx";
-        const string HeroAnimatorPath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/Demos Assets/Additional Resources/AC_RagdollAnimator_Hero Puncher.controller";
+        const string HeroAnimatorPath = "Assets/Brawl/Animations/AC_BrawlLaptop.overrideController";
         const string HeroPhysMatPath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Core/Ragdoll Resources/PM_NoFriction.physicMaterial";
 
         [InitializeOnLoadMethod]

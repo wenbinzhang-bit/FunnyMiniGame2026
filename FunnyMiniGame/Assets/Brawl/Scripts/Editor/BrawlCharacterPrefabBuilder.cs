@@ -17,7 +17,7 @@ namespace Brawl.EditorTools
     public static class BrawlCharacterPrefabBuilder
     {
         const string TestScenePath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/TestScene.unity";
-        const string ControllerPath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/Demos Assets/Additional Resources/AC_RagdollAnimator_Hero Puncher.controller";
+        const string ControllerPath = "Assets/Brawl/Animations/AC_BrawlLaptop.overrideController";
         const string OutputFolder = "Assets/Brawl/Prefabs/Characters";
         const string CatalogPath = OutputFolder + "/BrawlCharacterCatalog.asset";
         const string PunchSwingHitPath = "Assets/Brawl/Audio/PunchSwing_Hit.mp3";
