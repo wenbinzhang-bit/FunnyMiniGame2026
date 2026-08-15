@@ -1,0 +1,19 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9f2da0164c8ff47489e6ad0de3a80022, type: 3}
+  m_Name: BrawlCharacterCatalog
+  m_EditorClassIdentifier: 
+  characterPrefabs:
+  - {fileID: 7673178447298958435, guid: 1afd68cb29939c94a8c9de372382d21e, type: 3}
+  - {fileID: 6083023806183275983, guid: ea1b6742864682449b0d36a7ab47ecc1, type: 3}
+  - {fileID: 2109131740610896258, guid: f0d209dc8f5daea4abd653c30628ea05, type: 3}
+  - {fileID: 2092579621248134895, guid: e33e0de468b21ce478295d95c957f099, type: 3}
