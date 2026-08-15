@@ -72,7 +72,12 @@ namespace Brawl
                 rb.isKinematic = true;
 
             foreach (var col in GetComponentsInChildren<Collider>(true))
+            {
+                // 根节点胶囊体留给出拳判定,不要和远程姿态回放一起关掉
+                if (col.transform == transform && col is CapsuleCollider)
+                    continue;
                 col.enabled = false;
+            }
         }
 
         void LateUpdate()

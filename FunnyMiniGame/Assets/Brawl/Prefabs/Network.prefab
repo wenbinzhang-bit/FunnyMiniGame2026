@@ -12,6 +12,7 @@ GameObject:
   - component: {fileID: 7222475843509849416}
   - component: {fileID: 2360679491573395559}
   - component: {fileID: 4922544233746522857}
+  - component: {fileID: 4922544233746522858}
   m_Layer: 0
   m_Name: Network
   m_TagString: Untagged
@@ -60,12 +61,14 @@ MonoBehaviour:
   disconnectInactiveConnections: 0
   disconnectInactiveTimeout: 60
   authenticator: {fileID: 0}
-  playerPrefab: {fileID: 4358517377733193840, guid: 8361b6cc5816cf043a250695e0e3d1f9, type: 3}
+  playerPrefab: {fileID: 1656220475993402535, guid: 070cd67144989d64d8e931a8d839d904, type: 3}
   autoCreatePlayer: 1
   playerSpawnMethod: 1
   spawnPrefabs:
   - {fileID: 3088699393646058457, guid: 6628de6af13e0aa4d9ab153e58f0897c, type: 3}
-  exceptionsDisconnect: 1
+  - {fileID: 1656220475993402535, guid: 7dd5dd39bdf761e48bb4b406c3158293, type: 3}
+  - {fileID: 1656220475993402535, guid: 9051c9c4a7a28ea49be6086a80f05115, type: 3}
+  exceptionsDisconnect: 0
   snapshotSettings:
     bufferTimeMultiplier: 2
     bufferLimit: 32
@@ -80,6 +83,7 @@ MonoBehaviour:
   evaluationMethod: 0
   evaluationInterval: 3
   timeInterpolationGui: 0
+  playerModels: {fileID: 11400000, guid: d5e6f708192a3b4c5d6e7f8091a2b3c4, type: 2}
 --- !u!114 &2360679491573395559
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -123,3 +127,15 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   offsetX: 0
   offsetY: 0
+--- !u!114 &4922544233746522858
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2762730718551328932}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 7a1c2e3b4d5f6789a0b1c2d3e4f50617, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 

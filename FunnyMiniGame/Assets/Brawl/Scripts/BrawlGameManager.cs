@@ -8,7 +8,8 @@ namespace Brawl
     /// <summary>
     /// 服务端权威的对局循环:
     /// - 不足 2 人:自由活动,掉落后回出生点
-    /// - 满 2 人自动开局:掉出场地(y &lt; KillY)判淘汰,被传送到观战岛
+    /// - 满 2 人自动开局:掉出场地或血量归零判淘汰
+    /// - 血量归零的玩家当场倒地,掉出场地的玩家传送到观战岛
     /// - 场上仅剩 1 人时该玩家得 1 分,数秒后所有人回出生点开新回合
     /// 状态文本通过 SyncVar 广播,OnGUI 显示。
     /// </summary>
@@ -33,7 +34,7 @@ namespace Brawl
         class PlayerEntry
         {
             public NetworkConnectionToClient conn;
-            public NetPlayerMotor motor;
+            public IBrawlPlayer motor;
             public bool alive;
         }
 
@@ -43,6 +44,8 @@ namespace Brawl
         void Awake()
         {
             Instance = this;
+            if (GetComponent<PlayerHealthHud>() == null)
+                gameObject.AddComponent<PlayerHealthHud>();
         }
 
         void OnDestroy()
@@ -54,7 +57,7 @@ namespace Brawl
         public void ServerOnPlayerJoined(NetworkConnectionToClient conn)
         {
             if (conn.identity == null) return;
-            var motor = conn.identity.GetComponent<NetPlayerMotor>();
+            var motor = conn.identity.GetComponent<IBrawlPlayer>();
             if (motor == null) return;
 
             // 对局中途加入的玩家直接以存活身份参战
@@ -70,7 +73,7 @@ namespace Brawl
         [ServerCallback]
         void Update()
         {
-            players.RemoveAll(p => p.motor == null);
+            players.RemoveAll(p => p.motor == null || p.motor.Transform == null);
 
             switch (state)
             {
@@ -95,7 +98,7 @@ namespace Brawl
         {
             // 自由活动:掉落直接拉回出生点
             foreach (var p in players)
-                if (p.motor.transform.position.y < KillY)
+                if (p.motor.Transform.position.y < KillY)
                     p.motor.ServerTeleport(p.motor.SpawnPosition + Vector3.up * 3f);
 
             statusText = $"等待玩家加入 ({players.Count}/2)... 满 2 人自动开局 | {ScoreLine()}";
@@ -114,6 +117,8 @@ namespace Brawl
             {
                 p.alive = true;
                 p.motor.InputActive = true;
+                if (p.motor.Attributes != null)
+                    p.motor.Attributes.ServerResetHealth();
                 Transform start = NetworkManager.singleton.GetStartPosition();
                 Vector3 pos = start != null ? start.position : new Vector3(i * 2f, 3f, 0f);
                 p.motor.SpawnPosition = pos;
@@ -133,12 +138,21 @@ namespace Brawl
                 if (!p.alive)
                 {
                     // 观战岛上也可能掉下去,拉回来
-                    if (p.motor.transform.position.y < KillY)
+                    if (p.motor.Transform.position.y < KillY)
                         p.motor.ServerTeleport(SpectatorIsland);
                     continue;
                 }
 
-                if (p.motor.transform.position.y < KillY)
+                if (p.motor.IsDead)
+                {
+                    p.alive = false;
+                    p.motor.InputActive = false;
+                    if (p.motor.Transform.position.y < KillY)
+                        p.motor.ServerTeleport(SpectatorIsland);
+                    continue;
+                }
+
+                if (p.motor.Transform.position.y < KillY)
                 {
                     p.alive = false;
                     p.motor.ServerTeleport(SpectatorIsland);
@@ -156,7 +170,7 @@ namespace Brawl
                 if (lastAlive != null)
                 {
                     lastAlive.motor.Score++;
-                    statusText = $"P{lastAlive.motor.netId} 获胜!{RoundRestartDelay:0} 秒后开新回合 | {ScoreLine()}";
+                    statusText = $"P{lastAlive.motor.NetId} 获胜!{RoundRestartDelay:0} 秒后开新回合 | {ScoreLine()}";
                 }
 
                 state = EState.RoundEnd;
@@ -171,7 +185,7 @@ namespace Brawl
         [Server]
         string ScoreLine()
         {
-            return string.Join("  ", players.Select(p => $"P{p.motor.netId}:{p.motor.Score}分"));
+            return string.Join("  ", players.Select(p => $"P{p.motor.NetId}:{p.motor.Score}分"));
         }
 
         void OnGUI()
@@ -187,10 +201,15 @@ namespace Brawl
 
             GUI.Label(new Rect(0, 8, Screen.width, 30), statusText, style);
 
-            var hint = new GUIStyle(GUI.skin.label) { fontSize = 14, alignment = TextAnchor.MiddleCenter };
-            hint.normal.textColor = new Color(1f, 1f, 1f, 0.65f);
-            GUI.Label(new Rect(0, Screen.height - 28, Screen.width, 22),
-                "WASD 移动 | 空格 跳跃 | E 前伸抓取 | Q 上举 | R 投掷 | 右键锁定视角, Tab 释放鼠标", hint);
+            var hint = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 16,
+                alignment = TextAnchor.LowerLeft
+            };
+            hint.normal.textColor = new Color(1f, 1f, 1f, 0.85f);
+            GUI.Label(new Rect(16, Screen.height - 168, 420, 152),
+                "W S A D : Movement\nSpace : Jump\nLeft Click : Punch\nHold Left Click : Grab\nRight Click : Throw\nTab : Capture Mouse",
+                hint);
         }
     }
 }

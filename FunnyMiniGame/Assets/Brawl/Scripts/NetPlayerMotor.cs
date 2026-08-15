@@ -13,7 +13,7 @@ namespace Brawl
     /// 移植自 ClaymanController:输入不再来自本地键盘,而是客户端通过 Command 上报的意图。
     /// 全部物理只在服务端执行;客户端表现由 RagdollNetworkSync 的姿态流驱动。
     /// </summary>
-    public class NetPlayerMotor : NetworkBehaviour
+    public class NetPlayerMotor : NetworkBehaviour, IBrawlPlayer
     {
         public RagdollAnimator2 RagdollAnimator;
 
@@ -39,10 +39,16 @@ namespace Brawl
         public float ExtraRaycastDistance = 0.12f;
         public float SpherecastRadius = 0.25f;
 
-        [SyncVar] public int Score;
+        [SyncVar] int score;
+        public int Score { get => score; set => score = value; }
+
+        public uint NetId => netId;
+        public Transform Transform => transform;
+        public PlayerAttributes Attributes { get; private set; }
+        public bool IsDead => Attributes != null && Attributes.IsDead;
 
         /// <summary>服务端:是否接受该玩家的移动输入(对局管理器可冻结)。</summary>
-        [NonSerialized] public bool InputActive = true;
+        public bool InputActive { get; set; } = true;
 
         public bool ServerInitialized { get; private set; }
         public Vector3 SpawnPosition { get; set; }
@@ -63,6 +69,8 @@ namespace Brawl
         {
             grab = GetComponent<NetPlayerGrab>();
             if (RagdollAnimator == null) RagdollAnimator = GetComponent<RagdollAnimator2>();
+            Attributes = GetComponent<PlayerAttributes>();
+            if (Attributes == null) Attributes = gameObject.AddComponent<PlayerAttributes>();
         }
 
         public override void OnStartServer()

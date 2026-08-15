@@ -545,6 +545,7 @@ GameObject:
   - component: {fileID: 4569058815101996886}
   - component: {fileID: 4493964524380848342}
   - component: {fileID: 4541959723033497541}
+  - component: {fileID: 8123456789012345004}
   m_Layer: 1
   m_Name: NetClayman
   m_TagString: Untagged
@@ -2236,6 +2237,24 @@ MonoBehaviour:
   syncInterval: 0
   FollowOffset: {x: 0, y: 1.2, z: 0}
   DistanceRanges: {x: 2.5, y: 8}
+--- !u!114 &8123456789012345004
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4358517377733193840}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c8a41f7e2b9d4e06a5f3c1d8e7b04629, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0
+  MaxHealth: 100
+  AttackDamage: 10
+  currentHealth: 100
 --- !u!1 &4566429159459062379
 GameObject:
   m_ObjectHideFlags: 0

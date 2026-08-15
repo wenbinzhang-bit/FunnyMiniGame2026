@@ -48,6 +48,9 @@ namespace FIMSpace.Basics
         [Header("If you want to hold cursor (cursor switch on TAB)")]
         public bool LockCursor = false;
 
+        [Tooltip("取消后右键不再用来锁定鼠标,留给玩法(例如松手)")]
+        public bool RightClickToLockCursor = true;
+
         /// <summary> Just to make turning off lock cursor less annoying </summary>
         private bool rotateCamera = true;
 
@@ -109,7 +112,7 @@ namespace FIMSpace.Basics
 
         private void Update()
         {
-            if (Input.GetMouseButtonDown(1))
+            if (RightClickToLockCursor && Input.GetMouseButtonDown(1))
                 if (Cursor.lockState != CursorLockMode.Locked) HelperSwitchCursor();
 
             if (Input.GetKey(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Tab))

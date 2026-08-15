@@ -111,7 +111,7 @@ namespace FIMSpace.RagdollAnimatorDemo
 
         private void OnDisable()
         {
-            Rigb.isKinematic = true;
+            // 倒地时会关掉 Mover 让身体倒下;不能在这里改 kinematic,否则击退/摔倒立刻失效
             Rigb.detectCollisions = true;
         }
 

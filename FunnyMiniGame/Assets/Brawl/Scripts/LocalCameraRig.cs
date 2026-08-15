@@ -31,6 +31,7 @@ namespace Brawl
             tpp.FollowingOffset = FollowOffset;
             tpp.DistanceRanges = DistanceRanges;
             tpp.LockCursor = true;
+            tpp.RightClickToLockCursor = GetComponent<NetFAnnequinController>() == null;
             tpp.enabled = true;
 
             Cursor.lockState = CursorLockMode.Locked;

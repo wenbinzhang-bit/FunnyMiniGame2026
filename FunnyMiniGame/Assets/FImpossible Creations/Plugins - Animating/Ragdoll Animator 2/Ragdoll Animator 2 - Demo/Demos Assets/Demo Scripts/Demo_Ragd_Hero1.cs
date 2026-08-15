@@ -36,6 +36,9 @@ namespace FIMSpace.RagdollAnimatorDemo
         public RA2MagnetPoint GripMagnet;
 
         [Header( "Input" )]
+        [Tooltip( "联机时由 NetFAnnequinController 关掉,避免每台机器都读本地键盘" )]
+        public bool ProcessInput = true;
+
         public KeyCode PunchKey = KeyCode.None;
 
         public KeyCode PunchUppercutKey = KeyCode.None;
@@ -44,7 +47,7 @@ namespace FIMSpace.RagdollAnimatorDemo
         public KeyCode CatchKey = KeyCode.None;
 
         private int actionHash = Animator.StringToHash( "Action" );
-        private bool InAction => Mecanim.GetBool( actionHash );
+        private bool InAction => Mecanim != null && Mecanim.runtimeAnimatorController != null && Mecanim.GetBool( actionHash );
         private bool Action
         { get { return Mecanim.GetBool( actionHash ); } set { Mecanim.SetBool( actionHash, value ); } }
 
@@ -52,6 +55,9 @@ namespace FIMSpace.RagdollAnimatorDemo
 
         private void Start()
         {
+            if( Mover == null ) Mover = GetComponent<FBasic_RigidbodyMover>();
+            if( Mover == null ) return;
+
             Collider[] myCol = Mover.GetComponentsInChildren<Collider>();
             foreach( var col in myCol ) toIgnore.Add( col );
             if( Ragdoll ) foreach( var col in Ragdoll.Settings.User_GetAllDummyColliders() ) toIgnore.Add( col );
@@ -61,6 +67,12 @@ namespace FIMSpace.RagdollAnimatorDemo
 
         private void LateUpdate()
         {
+            if( ProcessInput == false )
+            {
+                UpdateHoldingUp();
+                return;
+            }
+
             Vector2 moveDirectionLocal = Vector2.zero;
 
             if( InAction == false )
@@ -226,12 +238,75 @@ namespace FIMSpace.RagdollAnimatorDemo
             PlayClip( "Force Grip" );
         }
 
+        public bool IsHoldingUp => isHoldingUp != null;
+        public bool IsThrowing { get; private set; }
+
+        /// <summary>投掷方向覆盖。动画事件 EThrow 会用它,用完清空。</summary>
+        public Vector3 PendingThrowDirection;
+
+        public void DoRelease()
+        {
+            updateUpperBodyLayer = false;
+            IsThrowing = false;
+            PendingThrowDirection = Vector3.zero;
+            if( Mecanim && Mecanim.layerCount > 1 )
+                Mecanim.SetLayerWeight( 1, 0f );
+
+            if( isHoldingUp != null )
+            {
+                EThrow();
+                return;
+            }
+
+            if( CatchMagnet ) CatchMagnet.enabled = false;
+        }
+
+        public void SetHoldingPose( bool on )
+        {
+            updateUpperBodyLayer = on;
+            if( Mecanim == null || Mecanim.layerCount < 2 ) return;
+            if( on ) Mecanim.CrossFadeInFixedTime( "Holding", 0.1f, 1 );
+            else Mecanim.SetLayerWeight( 1, 0f );
+        }
+
+        public void PlayThrowAnimation()
+        {
+            updateUpperBodyLayer = false;
+            IsThrowing = true;
+            PlayClip( "Holding Throw" );
+        }
+
+        public void ClearThrowing()
+        {
+            IsThrowing = false;
+        }
+
+        /// <summary>Punch Demo:抓住后再操作一次,先播 Holding Throw,等动画事件 EThrow 甩出。</summary>
+        public void DoThrow()
+        {
+            if( IsThrowing ) return;
+            if( isHoldingUp == null )
+            {
+                updateUpperBodyLayer = false;
+                if( CatchMagnet ) CatchMagnet.enabled = false;
+                return;
+            }
+
+            PlayThrowAnimation();
+        }
+
         public void DoCatch()
+        {
+            DoCatch( 0.05f, 0.25f, 1f );
+        }
+
+        public void DoCatch( float width, float height, float zScale )
         {
             if( isHoldingUp == null )
             {
-                CastCloseBox();
-                Mecanim.CrossFadeInFixedTime( "Holding", 0.1f, 1 );
+                CastCloseBox( 1f, width, height, zScale );
+                if( Mecanim && Mecanim.layerCount > 1 )
+                    Mecanim.CrossFadeInFixedTime( "Holding", 0.1f, 1 );
 
                 var ragdoll = FindRagdollIn( close, closeCount );
                 isHoldingUp = ragdoll;
@@ -239,22 +314,28 @@ namespace FIMSpace.RagdollAnimatorDemo
                 if( isHoldingUp != null )
                 {
                     isHoldingUp.User_SwitchFallState();
-                    isHoldingUp.Mecanim.CrossFadeInFixedTime( "Gripped", 0.15f );
+                    if( isHoldingUp.Mecanim )
+                        isHoldingUp.Mecanim.CrossFadeInFixedTime( "Gripped", 0.15f );
                     isHoldingUp.User_OverrideMusclesPower = 0.9f;
 
                     var head = isHoldingUp.User_GetBoneSetupByHumanoidBone( HumanBodyBones.Head );
-
-                    CatchMagnet.DragPower = 1f;
-                    CatchMagnet.ToMove = head.GameRigidbody.transform;
-                    CatchMagnet.enabled = true;
+                    if( head == null || head.GameRigidbody == null )
+                    {
+                        isHoldingUp = null;
+                    }
+                    else if( CatchMagnet )
+                    {
+                        CatchMagnet.DragPower = 1f;
+                        CatchMagnet.ToMove = head.GameRigidbody.transform;
+                        CatchMagnet.enabled = true;
+                    }
                 }
 
                 updateUpperBodyLayer = isHoldingUp != null;
             }
             else // Click during Holding
             {
-                updateUpperBodyLayer = false;
-                PlayClip( "Holding Throw" );
+                DoThrow();
             }
         }
 
@@ -273,7 +354,7 @@ namespace FIMSpace.RagdollAnimatorDemo
 
         private void UpdateHoldingUp()
         {
-            if( CatchMagnet.enabled )
+            if( CatchMagnet && CatchMagnet.enabled )
             {
                 CatchMagnet.DragPower = Mathf.Min( 3f, CatchMagnet.DragPower + Time.deltaTime * 6f );
                 CatchMagnet.RotatePower = CatchMagnet.DragPower;
@@ -286,6 +367,7 @@ namespace FIMSpace.RagdollAnimatorDemo
                     GripMagnet.RotatePower = GripMagnet.DragPower * 5f;
                     gripped.OverrideSpringsValueOnFall = 4000f;
 
+                    if( Camera.main == null ) return;
                     Transform cam = Camera.main.transform;
                     Vector3 targetPosition = transform.TransformPoint( magnetPosLocal );
                     targetPosition = cam.InverseTransformPoint( targetPosition );
@@ -310,15 +392,19 @@ namespace FIMSpace.RagdollAnimatorDemo
                 if( GripMagnet ) if( GripMagnet.enabled ) dur = 0.4f;
             }
 
-            float newWeight = Mecanim.GetLayerWeight( 1 );
-            newWeight = Mathf.SmoothDamp( newWeight, targetWeight, ref _sd_layer, dur, 100000f, Time.deltaTime );
-            Mecanim.SetLayerWeight( 1, newWeight );
+            if( Mecanim && Mecanim.layerCount > 1 )
+            {
+                float newWeight = Mecanim.GetLayerWeight( 1 );
+                newWeight = Mathf.SmoothDamp( newWeight, targetWeight, ref _sd_layer, dur, 100000f, Time.deltaTime );
+                Mecanim.SetLayerWeight( 1, newWeight );
+            }
         }
 
         // Utilities ---------------------
 
         public void PlayClip( string state, float timeOffset = 0f )
         {
+            if( Mecanim == null ) return;
             Mecanim.CrossFadeInFixedTime( state, 0.145f, 0, timeOffset );
         }
 
@@ -326,62 +412,145 @@ namespace FIMSpace.RagdollAnimatorDemo
 
         public void EThrow()
         {
-            CatchMagnet.enabled = false;
+            Vector3 dir = PendingThrowDirection.sqrMagnitude > 0.0001f ? PendingThrowDirection : transform.forward;
+            PendingThrowDirection = Vector3.zero;
+            ApplyThrow( dir );
+        }
+
+        public void EThrow( Vector3 worldDir )
+        {
+            PendingThrowDirection = Vector3.zero;
+            ApplyThrow( worldDir );
+        }
+
+        void ApplyThrow( Vector3 worldDir )
+        {
+            IsThrowing = false;
+            if( CatchMagnet ) CatchMagnet.enabled = false;
+            if( isHoldingUp == null ) return;
+
+            if( worldDir.sqrMagnitude < 0.0001f ) worldDir = transform.forward;
+            worldDir.Normalize();
 
             var head = isHoldingUp.User_GetBoneSetupByHumanoidBone( HumanBodyBones.Head );
+            if( head == null || head.GameRigidbody == null )
+            {
+                isHoldingUp = null;
+                return;
+            }
             head.GameRigidbody.isKinematic = false;
 
             isHoldingUp.User_OverrideMusclesPower = null;
 
-            isHoldingUp.Mecanim.CrossFadeInFixedTime( "Fall Pose", 0.2f );
+            if( isHoldingUp.Mecanim )
+                isHoldingUp.Mecanim.CrossFadeInFixedTime( "Fall Pose", 0.2f );
 
-            RagdollHandlerUtilities.User_AddBoneImpact( isHoldingUp, head, transform.forward * ThrowPower, 0.15f, ForceMode.Force, 0f, 1 );
-            RagdollHandlerUtilities.User_AddBoneImpact( isHoldingUp, isHoldingUp.GetAnchorBoneController, transform.forward * ThrowPower * 0.75f, 0.1f, ForceMode.Force, 0f, 1 );
+            RagdollHandlerUtilities.User_AddBoneImpact( isHoldingUp, head, worldDir * ThrowPower, 0.15f, ForceMode.Force, 0f, 1 );
+            RagdollHandlerUtilities.User_AddBoneImpact( isHoldingUp, isHoldingUp.GetAnchorBoneController, worldDir * ThrowPower * 0.75f, 0.1f, ForceMode.Force, 0f, 1 );
 
             isHoldingUp = null;
         }
 
+        float lastPunchHitTime = -1f;
+
+        /// <summary>出拳命中帧回调,联机玩家受击走这条,和打 NPC 同一时机。</summary>
+        public System.Action<Vector3> OnMeleeHit;
+
         public void EPunchForward()
         {
-            CastCloseBox( 1f, 0.3f, 0.25f, 1.1f );
+            if( Time.time - lastPunchHitTime < 0.12f ) return;
+            lastPunchHitTime = Time.time;
+
+            CastCloseBox( 1f, 0.55f, 0.7f, 1.6f );
             RagdollHandler rag = FindRagdollIn( close, closeCount );
+            Vector3 impactDirection = transform.forward + new Vector3( 0f, 0.33f, 0f );
 
             if( rag != null )
             {
                 if( HitAudio ) HitAudio.Play();
 
-                Vector3 impactDirection = transform.forward + new Vector3( 0f, 0.33f, 0f );
                 var rigidbody = rag.User_GetNearestRagdollRigidbodyToPosition( transform.TransformPoint( new Vector3( 0f, 1.45f, 0.2f ) ), true, ERagdollChainType.Core );
-                if( rigidbody == null ) return;
+                if( rigidbody != null )
+                {
+                    rag.User_SwitchFallState();
 
-                rag.User_SwitchFallState();
-
-                float chargeMul = 1f + chargeAmount * 0.4f;
-                rag.User_AddAllBonesImpact( impactDirection * ( PunchPower * 0.5f * chargeMul ), 0.05f, ForceMode.Impulse );
-                rag.User_AddRigidbodyImpact( rigidbody, impactDirection * ( PunchPower * 1.5f * chargeMul ), 0.0f, ForceMode.Impulse );
+                    float chargeMul = 1f + chargeAmount * 0.4f;
+                    rag.User_AddAllBonesImpact( impactDirection * ( PunchPower * 0.5f * chargeMul ), 0.05f, ForceMode.Impulse );
+                    rag.User_AddRigidbodyImpact( rigidbody, impactDirection * ( PunchPower * 1.5f * chargeMul ), 0.0f, ForceMode.Impulse );
+                }
             }
+
+            OnMeleeHit?.Invoke( impactDirection );
+            HitMeleeVictims( impactDirection );
         }
 
         public void EPunchUp()
         {
-            CastCloseBox( 1f, 0.05f, 0.25f, .9f );
+            if( Time.time - lastPunchHitTime < 0.12f ) return;
+            lastPunchHitTime = Time.time;
+
+            CastCloseBox( 1f, 0.45f, 0.7f, 1.4f );
             RagdollHandler rag = FindRagdollIn( close, closeCount );
+            Vector3 impactDirection = Vector3.up;
 
             if( rag != null )
             {
                 if( HitAudio ) HitAudio.Play();
 
-                Vector3 impactDirection = Vector3.up;
                 var rigidbody = rag.User_GetNearestRagdollRigidbodyToPosition( transform.TransformPoint( new Vector3( 0f, 1.45f, 0.2f ) ), true, ERagdollChainType.Core );
+                if( rigidbody != null )
+                {
+                    rag.User_SwitchFallState();
 
-                if( rigidbody == null ) return;
-
-                rag.User_SwitchFallState();
-
-                float chargeMul = 1f + chargeAmount * 0.3f;
-                rag.User_AddAllBonesImpact( impactDirection * ( UppercutPower * 0.55f * chargeMul ), 0f, ForceMode.VelocityChange );
-                rag.User_AddRigidbodyImpact( rigidbody, impactDirection * ( UppercutPower * 2.1f * chargeMul ), 0f, ForceMode.Impulse, 0.05f );
+                    float chargeMul = 1f + chargeAmount * 0.3f;
+                    rag.User_AddAllBonesImpact( impactDirection * ( UppercutPower * 0.55f * chargeMul ), 0f, ForceMode.VelocityChange );
+                    rag.User_AddRigidbodyImpact( rigidbody, impactDirection * ( UppercutPower * 2.1f * chargeMul ), 0f, ForceMode.Impulse, 0.05f );
+                }
             }
+
+            OnMeleeHit?.Invoke( impactDirection );
+            HitMeleeVictims( impactDirection );
+        }
+
+        void HitMeleeVictims( Vector3 impactDirection )
+        {
+            var hit = new HashSet<FAnnequinMeleeVictim>();
+
+            // 和打 Characters 同一记出拳盒:玩家胶囊体在层 0,本来就会被扫到,只是没有布娃娃所以之前被丢掉了
+            for( int i = 0; i < closeCount; i++ )
+            {
+                Collider col = close[i];
+                if( col == null || toIgnore.Contains( col ) ) continue;
+                FAnnequinMeleeVictim victim = col.GetComponentInParent<FAnnequinMeleeVictim>();
+                if( victim == null || victim.BelongsTo( transform ) ) continue;
+                hit.Add( victim );
+            }
+
+            if( hit.Count == 0 )
+            {
+                FAnnequinMeleeVictim[] victims = FindObjectsOfType<FAnnequinMeleeVictim>();
+                Vector3 origin = transform.position;
+                Vector3 face = transform.forward;
+                face.y = 0f;
+                if( face.sqrMagnitude < 0.0001f ) face = Vector3.forward;
+                face.Normalize();
+
+                for( int i = 0; i < victims.Length; i++ )
+                {
+                    FAnnequinMeleeVictim victim = victims[i];
+                    if( victim == null || victim.BelongsTo( transform ) ) continue;
+
+                    Vector3 to = victim.transform.position - origin;
+                    to.y = 0f;
+                    float dist = to.magnitude;
+                    if( dist > 2.8f ) continue;
+                    if( dist > 1.6f && Vector3.Dot( face, to / Mathf.Max( dist, 0.001f ) ) < 0.15f ) continue;
+                    hit.Add( victim );
+                }
+            }
+
+            foreach( FAnnequinMeleeVictim victim in hit )
+                victim.OnHitByMelee?.Invoke( impactDirection );
         }
 
         private Collider[] surround = new Collider[64];
@@ -491,23 +660,31 @@ namespace FIMSpace.RagdollAnimatorDemo
         {
             for( int i = 0; i < length; i++ )
             {
-                if( c[i] == null ) continue;
-                if( toIgnore.Contains( c[i] ) ) continue;
-
-                RagdollAnimator2BoneIndicator ind = c[i].gameObject.GetComponent<RagdollAnimator2BoneIndicator>();
-
-                if( ind )
-                {
-                    if( Ragdoll )
-                    {
-                        if( ind.ParentHandler == Ragdoll.Settings ) continue;
-                        return ind.ParentHandler;
-                    }
-                    else return ind.ParentHandler;
-                }
+                RagdollHandler handler = GetRagdollFromCollider( c[i] );
+                if( handler != null ) return handler;
             }
 
             return null;
+        }
+
+        RagdollHandler GetRagdollFromCollider( Collider hit )
+        {
+            if( hit == null ) return null;
+            if( toIgnore.Contains( hit ) ) return null;
+
+            RagdollHandler handler = null;
+            RagdollAnimator2BoneIndicator ind = hit.GetComponent<RagdollAnimator2BoneIndicator>();
+            if( ind != null ) handler = ind.ParentHandler;
+
+            if( handler == null )
+            {
+                RagdollAnimator2 ra = hit.GetComponentInParent<RagdollAnimator2>();
+                if( ra != null ) handler = ra.Settings;
+            }
+
+            if( handler == null ) return null;
+            if( Ragdoll != null && handler == Ragdoll.Settings ) return null;
+            return handler;
         }
 
         private List<RagdollHandler> detectedRagdolls = new List<RagdollHandler>();
@@ -522,15 +699,9 @@ namespace FIMSpace.RagdollAnimatorDemo
 
                 if( toIgnore.Contains( c[i] ) ) continue;
 
-                RagdollAnimator2BoneIndicator ind = c[i].gameObject.GetComponent<RagdollAnimator2BoneIndicator>();
-
-                if( ind )
-                {
-                    if( Ragdoll ) if( ind.ParentHandler == Ragdoll.Settings ) continue; // Dont add self
-
-                    if( detectedRagdolls.Contains( ind.ParentHandler ) == false )
-                        detectedRagdolls.Add( ind.ParentHandler );
-                }
+                RagdollHandler handler = GetRagdollFromCollider( c[i] );
+                if( handler != null && detectedRagdolls.Contains( handler ) == false )
+                    detectedRagdolls.Add( handler );
             }
 
             return detectedRagdolls;
