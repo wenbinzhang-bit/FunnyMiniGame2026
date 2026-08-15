@@ -28,7 +28,6 @@ namespace Brawl
         [SyncVar(hook = nameof(OnHolderNetIdChanged))] uint holderNetId;
 
         NetFAnnequinController serverHolder;
-        NetworkTransformReliable networkTransform;
         MaterialPropertyBlock pickupPropertyBlock;
         Vector3 spawnPosition;
         Quaternion spawnRotation;
@@ -69,13 +68,14 @@ namespace Brawl
         void OnHolderNetIdChanged(uint previousHolderNetId, uint newHolderNetId)
         {
             ApplyPickupPulse(newHolderNetId == 0u);
-            SetNetworkFollowEnabled(newHolderNetId == 0u);
         }
 
         void LateUpdate()
         {
             if (!IsHeld) return;
 
+            // NetworkTransformReliable 必须始终保持启用。运行中禁用/启用会重置其增量压缩状态，
+            // 导致释放电脑时客户端用出生点作为错误基准。这里在 LateUpdate 覆盖显示位置即可。
             NetFAnnequinController holder = FindHolder();
             if (holder == null) return;
 
@@ -97,7 +97,6 @@ namespace Brawl
             serverHolder = holder;
             holderNetId = holder.netId;
             SetServerBodyHeld(true);
-            SetNetworkFollowEnabled(false);
             return true;
         }
 
@@ -120,7 +119,6 @@ namespace Brawl
 
             serverHolder = null;
             holderNetId = 0u;
-            SetNetworkFollowEnabled(true);
             ApplyLoosePose(position, velocity);
         }
 
@@ -129,7 +127,6 @@ namespace Brawl
         {
             serverHolder = null;
             holderNetId = 0u;
-            SetNetworkFollowEnabled(true);
             Vector3 pos = hasSpawnPose ? spawnPosition : transform.position;
             Quaternion rot = hasSpawnPose ? spawnRotation : transform.rotation;
             transform.SetPositionAndRotation(pos, rot);
@@ -224,19 +221,9 @@ namespace Brawl
             return null;
         }
 
-        void SetNetworkFollowEnabled(bool enabled)
-        {
-            if (networkTransform == null)
-                networkTransform = GetComponent<NetworkTransformReliable>();
-            if (networkTransform != null)
-                networkTransform.enabled = enabled;
-        }
-
         void ResolveBody()
         {
             if (Body == null) Body = GetComponent<Rigidbody>();
-            if (networkTransform == null)
-                networkTransform = GetComponent<NetworkTransformReliable>();
         }
 
         void ResolvePickupRenderers()
