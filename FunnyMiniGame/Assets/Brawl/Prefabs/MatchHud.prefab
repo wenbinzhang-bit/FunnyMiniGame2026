@@ -355,7 +355,7 @@ MonoBehaviour:
 
     Release Right Click : Put Down
 
-    Tab : Capture
+    Esc : Release
     Mouse'
 --- !u!114 &3439680131767705411
 MonoBehaviour:

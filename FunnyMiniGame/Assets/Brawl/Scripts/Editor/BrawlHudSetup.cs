@@ -178,7 +178,7 @@ namespace Brawl.EditorTools
         static void CreateControls(Transform parent, Font font)
         {
             Text hint = CreateText(parent, "Controls", 18, TextAnchor.LowerLeft, new Color(1f, 1f, 1f, 0.88f), font);
-            hint.text = "W S A D : Movement\nSpace : Jump\nLeft Click : Punch\nHold Right Click : Pick Up Laptop\nRelease Right Click : Put Down\nTab : Capture Mouse";
+            hint.text = "W S A D : Movement\nSpace : Jump\nLeft Click : Punch\nHold Right Click : Pick Up Laptop\nRelease Right Click : Put Down\nEsc : Release Mouse";
             SetRect(hint.rectTransform, new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(24f, 220f), new Vector2(460f, 170f));
         }
 

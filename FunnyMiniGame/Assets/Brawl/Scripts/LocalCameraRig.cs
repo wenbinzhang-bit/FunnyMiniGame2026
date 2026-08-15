@@ -6,7 +6,7 @@ namespace Brawl
 {
     /// <summary>
     /// 仅本地玩家:把场景主相机接上 FBasic 第三人称轨道相机并跟随自己。
-    /// 相机纯本地,不参与网络同步。右键锁定鼠标旋转视角,Tab/Esc 释放。
+    /// 相机纯本地,不参与网络同步。开局默认捕获鼠标,Esc 释放,再点窗口重新捕获。
     /// </summary>
     public class LocalCameraRig : NetworkBehaviour
     {
@@ -51,11 +51,43 @@ namespace Brawl
             tpp.VerticalFollowSmoothTime = VerticalFollowSmoothTime;
             tpp.VerticalFollowDeadZone = VerticalFollowDeadZone;
             tpp.LockCursor = true;
-            tpp.RightClickToLockCursor = GetComponent<NetFAnnequinController>() == null;
+            tpp.RightClickToLockCursor = false;
             tpp.enabled = true;
 
+            releasedByUser = false;
+            LockCursor();
+        }
+
+        bool releasedByUser;
+
+        void Update()
+        {
+            if (!isLocalPlayer) return;
+
+            if (Input.GetKeyDown(KeyCode.Escape))
+            {
+                releasedByUser = true;
+                UnlockCursor();
+                return;
+            }
+
+            if (releasedByUser && Application.isFocused && Input.GetMouseButtonDown(0))
+            {
+                releasedByUser = false;
+                LockCursor();
+            }
+        }
+
+        static void LockCursor()
+        {
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
+        }
+
+        static void UnlockCursor()
+        {
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
         }
 
         public override void OnStopLocalPlayer()

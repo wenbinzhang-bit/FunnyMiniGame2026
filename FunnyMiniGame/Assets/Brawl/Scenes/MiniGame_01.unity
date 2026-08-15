@@ -924,8 +924,8 @@ MonoBehaviour:
     Right Click : Throw
 
 
-    Tab
-    : Capture Mouse'
+    Esc
+    : Release Mouse'
 --- !u!222 &355199164
 CanvasRenderer:
   m_ObjectHideFlags: 0
@@ -1119,7 +1119,7 @@ MonoBehaviour:
 
     Right Click : Throw
 
-    Tab : Capture Mouse'
+    Esc : Release Mouse'
 --- !u!222 &446687154
 CanvasRenderer:
   m_ObjectHideFlags: 0

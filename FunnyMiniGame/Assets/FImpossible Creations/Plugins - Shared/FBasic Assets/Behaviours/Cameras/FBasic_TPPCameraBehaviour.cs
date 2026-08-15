@@ -139,7 +139,7 @@ namespace FIMSpace.Basics
             if (RightClickToLockCursor && Input.GetMouseButtonDown(1))
                 if (Cursor.lockState != CursorLockMode.Locked) HelperSwitchCursor();
 
-            if (Input.GetKey(KeyCode.Escape) || Input.GetKeyDown(KeyCode.Tab))
+            if (Input.GetKeyDown(KeyCode.Escape))
                 if (Cursor.lockState == CursorLockMode.Locked) HelperSwitchCursor();
 
             if (UpdateClock != EFUpdateClock.Update) return;
@@ -276,11 +276,8 @@ namespace FIMSpace.Basics
         {
             if (LockCursor)
             {
-                if (Input.GetKeyDown(KeyCode.Tab))
-                {
-                    HelperSwitchCursor();
-                    if (Cursor.visible) rotateCamera = false; else rotateCamera = true;
-                }
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    rotateCamera = Cursor.lockState == CursorLockMode.Locked;
             }
         }
 
