@@ -43,6 +43,11 @@ namespace Brawl
                 velocity.x = knockback.x;
                 velocity.z = knockback.z;
                 mover.Rigb.velocity = velocity;
+                Vector3 angularVelocity = mover.Rigb.angularVelocity;
+                angularVelocity.x = 0f;
+                angularVelocity.y = owner.KnockbackSpinVelocity;
+                angularVelocity.z = 0f;
+                mover.Rigb.angularVelocity = angularVelocity;
                 owner.TickKnockback(Time.fixedDeltaTime);
                 return;
             }

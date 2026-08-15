@@ -15,6 +15,7 @@ namespace Brawl.EditorTools
     public static class MiniGame01PlayerModelsSetup
     {
         const string SessionKey = "Brawl.MiniGame01PlayerModelsSetup.RanV5";
+        const string HitVoicePath = "Assets/Brawl/Resources/Audio/HitVoice_Ah.mp3";
 
         static readonly string[] CharacterPrefabPaths =
         {
@@ -133,13 +134,26 @@ namespace Brawl.EditorTools
                 controller.Mover = mover;
                 controller.Hero = hero;
                 controller.Mecanim = visualAnimator;
+                controller.PunchHitRange = 1.55f;
+                controller.PunchHitAngle = 55f;
+                controller.PunchPointBlankRange = 0.8f;
+                controller.HitVoiceClip = AssetDatabase.LoadAssetAtPath<AudioClip>(HitVoicePath);
+                controller.HitVoiceVolume = 0.9f;
+                controller.HitVoicePitchRange = new Vector2(0.96f, 1.04f);
                 controller.KnockdownGroundSeconds = 1.55f;
                 controller.GetUpFaceSeconds = 1.35f;
                 controller.GetUpBackSeconds = 1.65f;
-                controller.KnockdownSlideSpeed = 1.25f;
+                controller.KnockdownSlideSpeed = 4.8f;
+                controller.KnockdownLiftSpeed = 2.4f;
+                controller.KnockbackControlSeconds = 0.65f;
+                controller.KnockbackDeceleration = 8f;
+                controller.KnockbackSpinSpeed = 0.75f;
+                controller.KnockbackSpinDeceleration = 1.2f;
                 controller.VisualFallAngle = 82f;
-                controller.VisualFallSeconds = 0.28f;
-                controller.VisualFallLift = 0.18f;
+                controller.VisualFallDelay = 0.1f;
+                controller.VisualFallSeconds = 0.34f;
+                controller.VisualFallLift = 0.02f;
+                controller.GetUpAlignmentBlendSeconds = 0.5f;
 
                 GetOrAdd<LocalCameraRig>(root);
                 GetOrAdd<PlayerAttributes>(root);

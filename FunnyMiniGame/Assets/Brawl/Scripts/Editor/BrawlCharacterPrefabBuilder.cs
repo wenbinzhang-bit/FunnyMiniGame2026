@@ -20,7 +20,7 @@ namespace Brawl.EditorTools
         const string ControllerPath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/Demos Assets/Additional Resources/AC_RagdollAnimator_Hero Puncher.controller";
         const string OutputFolder = "Assets/Brawl/Prefabs/Characters";
         const string CatalogPath = OutputFolder + "/BrawlCharacterCatalog.asset";
-        const string PunchVoiceQuPath = "Assets/Brawl/Audio/PunchVoice_Qu.wav";
+        const string PunchSwingHitPath = "Assets/Brawl/Audio/PunchSwing_Hit.mp3";
 
         static readonly CharacterDefinition[] Characters =
         {
@@ -354,11 +354,11 @@ namespace Brawl.EditorTools
 
         static AudioClip[] LoadPunchVoiceClips()
         {
-            AudioClip qu = AssetDatabase.LoadAssetAtPath<AudioClip>(PunchVoiceQuPath);
-            if (qu == null)
-                throw new InvalidOperationException("出拳语音尚未被 Unity 导入，请执行 Assets/Refresh 后重试。");
+            AudioClip punchSwing = AssetDatabase.LoadAssetAtPath<AudioClip>(PunchSwingHitPath);
+            if (punchSwing == null)
+                throw new InvalidOperationException("挥拳音效尚未被 Unity 导入，请执行 Assets/Refresh 后重试。");
 
-            return new[] { qu };
+            return new[] { punchSwing };
         }
 
         static void ConfigurePunchVoice(PunchAnimationEventRelay relay, AudioClip[] clips)
