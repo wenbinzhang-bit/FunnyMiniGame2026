@@ -22,6 +22,32 @@ namespace Brawl
         [Min(0.1f)] public float PunchMovementLockSeconds = 1.23f;
         [Min(0.1f)] public float UppercutAnimationLockSeconds = 0.8f;
 
+        [Header("Player Punch Hit Detection")]
+        [Min(0.5f)] public float PunchHitRange = 1.55f;
+        [Range(10f, 120f)] public float PunchHitAngle = 55f;
+        [Min(0f)] public float PunchPointBlankRange = 0.8f;
+
+        [Header("Hit Voice")]
+        public AudioClip HitVoiceClip;
+        [Range(0f, 1f)] public float HitVoiceVolume = 0.9f;
+        public Vector2 HitVoicePitchRange = new Vector2(0.96f, 1.04f);
+
+        [Header("Knockdown / Get Up")]
+        [Min(0.1f)] public float KnockdownGroundSeconds = 1.55f;
+        [Min(0.1f)] public float GetUpFaceSeconds = 1.35f;
+        [Min(0.1f)] public float GetUpBackSeconds = 1.65f;
+        [Min(0f)] public float KnockdownSlideSpeed = 4.8f;
+        [Min(0f)] public float KnockdownLiftSpeed = 2.4f;
+        [Min(0.05f)] public float KnockbackControlSeconds = 0.65f;
+        [Min(0f)] public float KnockbackDeceleration = 8f;
+        [Min(0f)] public float KnockbackSpinSpeed = 0.75f;
+        [Min(0f)] public float KnockbackSpinDeceleration = 1.2f;
+        [Range(45f, 90f)] public float VisualFallAngle = 82f;
+        [Min(0f)] public float VisualFallDelay = 0.1f;
+        [Min(0.05f)] public float VisualFallSeconds = 0.34f;
+        [Min(0f)] public float VisualFallLift = 0.02f;
+        [Min(0.05f)] public float GetUpAlignmentBlendSeconds = 0.5f;
+
         [SyncVar] int score;
         public int Score { get => score; set => score = value; }
 
@@ -43,6 +69,7 @@ namespace Brawl
         public bool IsGrabbed => grabber != null;
         public bool IsKnockedDown { get; private set; }
         public Vector3 KnockbackVelocity { get; private set; }
+        public float KnockbackSpinVelocity { get; private set; }
 
         Vector3 pendingMove;
         float lastSendTime;
@@ -52,6 +79,7 @@ namespace Brawl
         FAnnequinMouseActions mouseActions;
         FAnnequinGrabHelper grabHelper;
         PlayerAttributes attributes;
+        AudioSource hitVoiceSource;
         FAnnequinMeleeVictim meleeVictim;
         NetworkTransformReliable netTransform;
         BrawlMoveSync moveSync;
@@ -59,6 +87,7 @@ namespace Brawl
         Coroutine throwFallback;
         Coroutine punchFallback;
         Coroutine knockdownRoutine;
+        Coroutine visualFallRoutine;
         float knockbackUntil;
         RigidbodyConstraints standingConstraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
         float lastPlayerPunchTime = -1f;
@@ -72,13 +101,14 @@ namespace Brawl
         Collider grabIgnoreA;
         Collider grabIgnoreB;
         float holdBodyOffset = 1.35f;
+        bool preferFaceGetUp;
+        Transform visualRoot;
+        Vector3 visualStandingLocalPosition;
+        Quaternion visualStandingLocalRotation;
 
         const float ThrowEventDelay = 0.28f;
         const float PunchHitDelay = 0.33f;
         const float UppercutHitDelay = 0.3f;
-        const float KnockdownGroundSeconds = 1.55f;
-        const float GetUpSeconds = 1.15f;
-
         const float HeartbeatInterval = 0.1f;
         const byte BtnSprint = 1;
         const byte BtnCtrl = 2;
@@ -88,6 +118,25 @@ namespace Brawl
             if (Mover == null) Mover = GetComponent<FBasic_RigidbodyMover>();
             if (Hero == null) Hero = GetComponent<Demo_Ragd_Hero1>();
             if (Mecanim == null) Mecanim = GetComponent<Animator>();
+            if (HitVoiceClip == null) HitVoiceClip = Resources.Load<AudioClip>("Audio/HitVoice_Ah");
+            hitVoiceSource = Hero != null && Hero.HitAudio != null ? Hero.HitAudio : GetComponent<AudioSource>();
+            if (hitVoiceSource == null)
+            {
+                hitVoiceSource = gameObject.AddComponent<AudioSource>();
+                hitVoiceSource.playOnAwake = false;
+                hitVoiceSource.loop = false;
+                hitVoiceSource.spatialBlend = 1f;
+                hitVoiceSource.dopplerLevel = 0f;
+                hitVoiceSource.minDistance = 1f;
+                hitVoiceSource.maxDistance = 14f;
+                hitVoiceSource.rolloffMode = AudioRolloffMode.Logarithmic;
+            }
+            if (Mecanim != null && Mecanim.transform != transform)
+            {
+                visualRoot = Mecanim.transform;
+                visualStandingLocalPosition = visualRoot.localPosition;
+                visualStandingLocalRotation = visualRoot.localRotation;
+            }
             if (Mover) baseMoveSpeed = Mover.MovementSpeed;
 
             attributes = GetComponent<PlayerAttributes>();
@@ -298,6 +347,12 @@ namespace Brawl
             if (Input.GetKey(KeyCode.LeftShift)) buttons |= BtnSprint;
             if (Input.GetKey(KeyCode.LeftControl)) buttons |= BtnCtrl;
 
+            if (!InputActive)
+            {
+                worldDir = Vector3.zero;
+                buttons = 0;
+            }
+
             if (!isServer)
                 pendingMove = worldDir;
 
@@ -310,8 +365,8 @@ namespace Brawl
                 lastSendTime = Time.time;
             }
 
-            if (!attackMovementLocked && Input.GetKeyDown(KeyCode.Space)) CmdJump();
-            if (Input.GetKeyDown(KeyCode.Z) || Input.GetKeyDown(KeyCode.F))
+            if (InputActive && !attackMovementLocked && Input.GetKeyDown(KeyCode.Space)) CmdJump();
+            if (InputActive && (Input.GetKeyDown(KeyCode.Z) || Input.GetKeyDown(KeyCode.F)))
                 RequestPunch();
         }
 
@@ -366,7 +421,7 @@ namespace Brawl
 
         void RequestPunch()
         {
-            if (Time.time < localAttackInputLockedUntil) return;
+            if (!InputActive || Time.time < localAttackInputLockedUntil) return;
 
             bool willThrow = Hero != null && (Hero.IsHoldingUp || Hero.IsThrowing);
             if (!willThrow)
@@ -587,10 +642,11 @@ namespace Brawl
             if (Time.time - lastPlayerPunchTime < 0.35f) return;
             Physics.SyncTransforms();
 
-            var targets = FindNearbyPlayers(3.5f, 160f, 2.4f);
+            var targets = FindNearbyPlayers(PunchHitRange, PunchHitAngle, PunchPointBlankRange);
             if (targets.Count == 0)
             {
-                NetFAnnequinController nearest = FindNearestPlayer(3.5f);
+                // 极近距离保底，处理角色胶囊相贴或短暂网络位置误差；不再跨身位吸附目标。
+                NetFAnnequinController nearest = FindNearestPlayer(PunchPointBlankRange);
                 if (nearest != null) targets.Add(nearest);
             }
 
@@ -707,7 +763,8 @@ namespace Brawl
         [Server]
         public void TickKnockback(float deltaTime)
         {
-            KnockbackVelocity = Vector3.MoveTowards(KnockbackVelocity, Vector3.zero, deltaTime * 18f);
+            KnockbackVelocity = Vector3.MoveTowards(KnockbackVelocity, Vector3.zero, deltaTime * KnockbackDeceleration);
+            KnockbackSpinVelocity = Mathf.MoveTowards(KnockbackSpinVelocity, 0f, deltaTime * KnockbackSpinDeceleration);
         }
 
         [Server]
@@ -717,6 +774,8 @@ namespace Brawl
             if (IsGrabbed) return;
             if (Time.time - lastReceivedHitTime < 0.45f) return;
             lastReceivedHitTime = Time.time;
+            if (isClient) PlayHitVoice();
+            RpcPlayHitVoice();
             if (attributes != null && damage > 0)
                 attributes.ServerTakeDamage(damage);
             if (heldPlayer != null)
@@ -726,34 +785,33 @@ namespace Brawl
             InputActive = false;
             pendingMove = Vector3.zero;
 
-            Vector3 vel = impulse.sqrMagnitude > 0.01f ? impulse : -transform.forward * 8f + Vector3.up * 4f;
-            vel.y = Mathf.Max(vel.y, 4f);
-            if (new Vector3(vel.x, 0f, vel.z).magnitude < 7f)
-            {
-                Vector3 horizontal = new Vector3(vel.x, 0f, vel.z);
-                if (horizontal.sqrMagnitude < 0.01f) horizontal = -transform.forward;
-                horizontal = horizontal.normalized * 8f;
-                vel.x = horizontal.x;
-                vel.z = horizontal.z;
-            }
+            Vector3 impact = impulse.sqrMagnitude > 0.01f ? impulse : -transform.forward;
+            Vector3 horizontal = Vector3.ProjectOnPlane(impact, Vector3.up);
+            if (horizontal.sqrMagnitude < 0.01f) horizontal = -transform.forward;
+            Vector3 vel = horizontal.normalized * KnockdownSlideSpeed + Vector3.up * KnockdownLiftSpeed;
+            float lateralImpact = Vector3.Dot(horizontal.normalized, transform.right);
+            float spinDirection = Mathf.Abs(lateralImpact) > 0.15f
+                ? Mathf.Sign(lateralImpact)
+                : ((netId & 1u) == 0u ? 1f : -1f);
+            KnockbackSpinVelocity = spinDirection * KnockbackSpinSpeed;
+
+            Vector3 standingForward = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
+            Vector3 knockdownDirection = Vector3.ProjectOnPlane(vel, Vector3.up);
+            preferFaceGetUp = standingForward.sqrMagnitude > 0.01f && knockdownDirection.sqrMagnitude > 0.01f
+                && Vector3.Dot(standingForward.normalized, knockdownDirection.normalized) > 0f;
 
             if (Mover != null && Mover.Rigb != null)
             {
                 Mover.enabled = false;
                 if (Mover.Rigb.isKinematic) Mover.Rigb.isKinematic = false;
-                Mover.Rigb.constraints = RigidbodyConstraints.None;
-                Vector3 push = new Vector3(vel.x, 0f, vel.z).normalized * 0.45f;
-                Mover.Rigb.position += push;
-                transform.position = Mover.Rigb.position;
+                // 只放开 Y 轴并施加短促转身；X/Z 仍锁定，避免整个人像轮胎一样连续翻滚。
+                Mover.Rigb.constraints = standingConstraints;
+                Mover.Rigb.angularVelocity = Vector3.up * KnockbackSpinVelocity;
                 Mover.Rigb.velocity = vel;
-
-                Vector3 torqueAxis = Vector3.Cross(Vector3.up, new Vector3(vel.x, 0f, vel.z).normalized);
-                if (torqueAxis.sqrMagnitude < 0.01f) torqueAxis = transform.right;
-                Mover.Rigb.AddTorque(torqueAxis.normalized * 16f, ForceMode.VelocityChange);
             }
 
             KnockbackVelocity = new Vector3(vel.x, 0f, vel.z);
-            knockbackUntil = Time.time + 0.2f;
+            knockbackUntil = Time.time + KnockbackControlSeconds;
             ServerIgnoreNearbyPlayerCollision(true);
 
             if (Mecanim)
@@ -763,7 +821,8 @@ namespace Brawl
                 Mecanim.SetBool("Moving", false);
                 Mecanim.CrossFadeInFixedTime("Fall", 0.08f, 0);
             }
-            RpcKnockDown(true, "Fall");
+            BeginVisualFall(preferFaceGetUp);
+            RpcKnockDown(true, "Fall", preferFaceGetUp);
 
             if (IsDead)
             {
@@ -811,7 +870,8 @@ namespace Brawl
                 Mecanim.SetBool("Moving", false);
                 Mecanim.CrossFadeInFixedTime("Fall", 0.08f, 0);
             }
-            RpcKnockDown(true, "Fall");
+            BeginVisualFall(preferFaceGetUp);
+            RpcKnockDown(true, "Fall", preferFaceGetUp);
         }
 
         [Server]
@@ -833,7 +893,11 @@ namespace Brawl
             yield return new WaitForSeconds(KnockdownGroundSeconds);
             if (!IsKnockedDown || IsGrabbed || IsDead) yield break;
 
-            string getUp = Vector3.Dot(transform.forward, Vector3.up) > 0.1f ? "Get Up Face" : "Get Up Back";
+            float lyingDirection = Vector3.Dot(transform.forward, Vector3.up);
+            bool getUpFromFace = Mathf.Abs(lyingDirection) > 0.15f
+                ? lyingDirection > 0f
+                : preferFaceGetUp;
+            string getUp = getUpFromFace ? "Get Up Face" : "Get Up Back";
             Vector3 yaw = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
             if (yaw.sqrMagnitude < 0.01f) yaw = Vector3.ProjectOnPlane(-transform.up, Vector3.up);
             if (yaw.sqrMagnitude < 0.01f) yaw = Vector3.forward;
@@ -852,11 +916,11 @@ namespace Brawl
             {
                 Mecanim.SetBool("Ragdolled", false);
                 Mecanim.SetBool("Grounded", true);
-                Mecanim.CrossFadeInFixedTime(getUp, 0.12f, 0);
+                PlayMatchedGetUp(getUp);
             }
-            RpcKnockDown(false, getUp);
+            RpcKnockDown(false, getUp, getUpFromFace);
 
-            yield return new WaitForSeconds(GetUpSeconds);
+            yield return new WaitForSeconds(getUpFromFace ? GetUpFaceSeconds : GetUpBackSeconds);
             if (!IsKnockedDown || IsGrabbed || IsDead) yield break;
             ServerForceStand();
         }
@@ -891,6 +955,7 @@ namespace Brawl
 
             ServerIgnoreNearbyPlayerCollision(false);
             KnockbackVelocity = Vector3.zero;
+            KnockbackSpinVelocity = 0f;
             knockbackUntil = 0f;
 
             if (IsGrabbed) return;
@@ -903,19 +968,219 @@ namespace Brawl
                 Mecanim.SetBool("Grounded", true);
                 Mecanim.SetBool("Moving", false);
             }
-            if (wasDown) RpcKnockDown(false, string.Empty);
+            if (wasDown)
+            {
+                ResetVisualToStanding();
+                RpcKnockDown(false, string.Empty, false);
+            }
         }
 
         [ClientRpc]
-        void RpcKnockDown(bool down, string clip)
+        void RpcPlayHitVoice()
+        {
+            // Host 已经在服务端路径播放；这里只补远端客户端，避免听到两遍。
+            if (isServer) return;
+            PlayHitVoice();
+        }
+
+        void PlayHitVoice()
+        {
+            if (HitVoiceClip == null)
+                HitVoiceClip = Resources.Load<AudioClip>("Audio/HitVoice_Ah");
+            if (HitVoiceClip == null) return;
+
+            if (hitVoiceSource == null)
+                hitVoiceSource = Hero != null && Hero.HitAudio != null ? Hero.HitAudio : GetComponent<AudioSource>();
+            if (hitVoiceSource == null) return;
+
+            float minPitch = Mathf.Min(HitVoicePitchRange.x, HitVoicePitchRange.y);
+            float maxPitch = Mathf.Max(HitVoicePitchRange.x, HitVoicePitchRange.y);
+            hitVoiceSource.pitch = Random.Range(minPitch, maxPitch);
+            hitVoiceSource.PlayOneShot(HitVoiceClip, HitVoiceVolume);
+        }
+
+        [ClientRpc]
+        void RpcKnockDown(bool down, string clip, bool faceDown)
         {
             if (isServer) return;
+
+            // down=false + 有起身动画时仍处于受控起身阶段；直到服务端随后发来空 clip 才恢复操作。
+            bool controlsLocked = down || !string.IsNullOrEmpty(clip);
+            ApplyClientKnockdownLock(controlsLocked);
+
+            if (down) BeginVisualFall(faceDown);
+            else if (string.IsNullOrEmpty(clip)) ResetVisualToStanding();
+
+            if (Mecanim != null)
+            {
+                Mecanim.SetBool("Ragdolled", false);
+                Mecanim.SetBool("Grounded", !down);
+                if (controlsLocked) Mecanim.SetBool("Moving", false);
+                if (!string.IsNullOrEmpty(clip))
+                {
+                    if (down) Mecanim.CrossFadeInFixedTime(clip, 0.1f, 0);
+                    else PlayMatchedGetUp(clip);
+                }
+            }
+        }
+
+        void BeginVisualFall(bool faceDown)
+        {
+            if (visualRoot == null) return;
+            if (visualFallRoutine != null) StopCoroutine(visualFallRoutine);
+            visualFallRoutine = StartCoroutine(AnimateVisualFall(faceDown));
+        }
+
+        IEnumerator AnimateVisualFall(bool faceDown)
+        {
+            Vector3 startPosition = visualRoot.localPosition;
+            Quaternion startRotation = visualRoot.localRotation;
+            Vector3 targetPosition = visualStandingLocalPosition + Vector3.up * VisualFallLift;
+            float fallDirection = faceDown ? 1f : -1f;
+            float sideDirection = (netId & 1u) == 0u ? 1f : -1f;
+            Quaternion recoilRotation = visualStandingLocalRotation
+                * Quaternion.Euler(-fallDirection * 10f, 0f, sideDirection * 5f);
+            Quaternion impactRotation = visualStandingLocalRotation
+                * Quaternion.Euler(fallDirection * (VisualFallAngle + 6f), 0f, sideDirection * 7f);
+            Quaternion targetRotation = visualStandingLocalRotation
+                * Quaternion.Euler(fallDirection * VisualFallAngle, 0f, sideDirection * 2f);
+            Vector3 recoilPosition = Vector3.Lerp(startPosition, targetPosition, 0.35f) + Vector3.up * 0.055f;
+            Vector3 impactPosition = targetPosition - Vector3.up * 0.012f;
+            float elapsed = 0f;
+
+            // 受击先后仰并抬起一点，再加速倒下；这样不会像整块模型被开关直接放平。
+            while (elapsed < VisualFallDelay)
+            {
+                if (visualRoot == null) yield break;
+                elapsed += Time.deltaTime;
+                float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / VisualFallDelay));
+                visualRoot.localPosition = Vector3.Lerp(startPosition, recoilPosition, t);
+                visualRoot.localRotation = Quaternion.Slerp(startRotation, recoilRotation, t);
+                yield return null;
+            }
+
+            elapsed = 0f;
+
+            while (elapsed < VisualFallSeconds)
+            {
+                if (visualRoot == null) yield break;
+                elapsed += Time.deltaTime;
+                float t = Mathf.Clamp01(elapsed / VisualFallSeconds);
+                float acceleratedFall = t * t;
+                visualRoot.localPosition = Vector3.Lerp(recoilPosition, impactPosition, acceleratedFall);
+                visualRoot.localRotation = Quaternion.Slerp(recoilRotation, impactRotation, acceleratedFall);
+                yield return null;
+            }
+
+            // 触地后回弹几度并稳定，保留重量感，但不允许根刚体继续翻滚。
+            const float settleSeconds = 0.1f;
+            elapsed = 0f;
+            while (elapsed < settleSeconds)
+            {
+                if (visualRoot == null) yield break;
+                elapsed += Time.deltaTime;
+                float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / settleSeconds));
+                visualRoot.localPosition = Vector3.Lerp(impactPosition, targetPosition, t);
+                visualRoot.localRotation = Quaternion.Slerp(impactRotation, targetRotation, t);
+                yield return null;
+            }
+
+            if (visualRoot != null)
+            {
+                visualRoot.localPosition = targetPosition;
+                visualRoot.localRotation = targetRotation;
+            }
+            visualFallRoutine = null;
+        }
+
+        void ResetVisualToStanding()
+        {
+            if (visualFallRoutine != null)
+            {
+                StopCoroutine(visualFallRoutine);
+                visualFallRoutine = null;
+            }
+            if (visualRoot == null) return;
+            visualRoot.localPosition = visualStandingLocalPosition;
+            visualRoot.localRotation = visualStandingLocalRotation;
+        }
+
+        void PlayMatchedGetUp(string state)
+        {
             if (Mecanim == null) return;
-            Mecanim.SetBool("Ragdolled", false);
-            Mecanim.SetBool("Grounded", !down);
-            if (down) Mecanim.SetBool("Moving", false);
-            if (!string.IsNullOrEmpty(clip))
-                Mecanim.CrossFadeInFixedTime(clip, 0.1f, 0);
+            if (visualRoot == null || !Mecanim.isHuman)
+            {
+                Mecanim.CrossFadeInFixedTime(state, 0.08f, 0);
+                return;
+            }
+
+            Transform hips = Mecanim.GetBoneTransform(HumanBodyBones.Hips);
+            if (hips == null)
+            {
+                ResetVisualToStanding();
+                Mecanim.CrossFadeInFixedTime(state, 0.08f, 0);
+                return;
+            }
+
+            // 记录倒地时的髋骨位置，再采样起身动画第一帧，用位置补偿消除切换支点造成的跳动。
+            Vector3 fallenHipsPosition = hips.position;
+            if (visualFallRoutine != null)
+            {
+                StopCoroutine(visualFallRoutine);
+                visualFallRoutine = null;
+            }
+
+            visualRoot.localPosition = visualStandingLocalPosition;
+            visualRoot.localRotation = visualStandingLocalRotation;
+            Mecanim.Play(state, 0, 0f);
+            Mecanim.Update(0f);
+
+            Vector3 worldOffset = Vector3.ClampMagnitude(fallenHipsPosition - hips.position, 1.25f);
+            Transform parent = visualRoot.parent;
+            Vector3 localOffset = parent != null ? parent.InverseTransformVector(worldOffset) : worldOffset;
+            visualRoot.localPosition = visualStandingLocalPosition + localOffset;
+            visualFallRoutine = StartCoroutine(BlendVisualPositionToStanding());
+        }
+
+        IEnumerator BlendVisualPositionToStanding()
+        {
+            Vector3 startPosition = visualRoot.localPosition;
+            float elapsed = 0f;
+
+            while (elapsed < GetUpAlignmentBlendSeconds)
+            {
+                if (visualRoot == null) yield break;
+                elapsed += Time.deltaTime;
+                float t = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01(elapsed / GetUpAlignmentBlendSeconds));
+                visualRoot.localPosition = Vector3.Lerp(startPosition, visualStandingLocalPosition, t);
+                visualRoot.localRotation = visualStandingLocalRotation;
+                yield return null;
+            }
+
+            if (visualRoot != null)
+            {
+                visualRoot.localPosition = visualStandingLocalPosition;
+                visualRoot.localRotation = visualStandingLocalRotation;
+            }
+            visualFallRoutine = null;
+        }
+
+        void ApplyClientKnockdownLock(bool locked)
+        {
+            IsKnockedDown = locked;
+            if (!isLocalPlayer) return;
+
+            InputActive = !locked && !IsDead && !IsGrabbed;
+            pendingMove = Vector3.zero;
+
+            if (Mover == null) return;
+            Mover.enabled = !locked && !IsDead;
+            if (Mover.Rigb == null) return;
+
+            Mover.Rigb.velocity = Vector3.zero;
+            Mover.Rigb.angularVelocity = Vector3.zero;
+            Mover.Rigb.isKinematic = locked;
+            Mover.Rigb.interpolation = locked ? RigidbodyInterpolation.None : RigidbodyInterpolation.Interpolate;
         }
 
         [ClientRpc]
@@ -992,7 +1257,7 @@ namespace Brawl
                 return;
             }
 
-            if (!isLocalPlayer && moveSync != null)
+            if ((!isLocalPlayer || IsKnockedDown || IsGrabbed) && moveSync != null)
                 moveSync.ApplyRemoteInterpolation();
         }
 
@@ -1081,6 +1346,7 @@ namespace Brawl
             InputActive = false;
             pendingMove = Vector3.zero;
             KnockbackVelocity = Vector3.zero;
+            KnockbackSpinVelocity = 0f;
             knockbackUntil = 0f;
             if (Mover)
             {
