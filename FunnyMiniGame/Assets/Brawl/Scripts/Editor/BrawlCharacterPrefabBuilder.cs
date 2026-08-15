@@ -20,6 +20,7 @@ namespace Brawl.EditorTools
         const string ControllerPath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/Demos Assets/Additional Resources/AC_RagdollAnimator_Hero Puncher.controller";
         const string OutputFolder = "Assets/Brawl/Prefabs/Characters";
         const string CatalogPath = OutputFolder + "/BrawlCharacterCatalog.asset";
+        const string PunchVoiceQuPath = "Assets/Brawl/Audio/PunchVoice_Qu.wav";
 
         static readonly CharacterDefinition[] Characters =
         {
@@ -40,6 +41,8 @@ namespace Brawl.EditorTools
                 if (Characters.All(character => AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath(character)) != null)
                     && AssetDatabase.LoadAssetAtPath<BrawlCharacterCatalog>(CatalogPath) != null)
                 {
+                    AssignPunchVoiceAudioToPrefabs();
+                    AssignPunchVoiceAudioToLoadedSceneObjects();
                     ValidateBuiltPrefabs();
                     return;
                 }
@@ -172,6 +175,7 @@ namespace Brawl.EditorTools
                 var relayObject = new SerializedObject(relay);
                 relayObject.FindProperty("target").objectReferenceValue = hero;
                 relayObject.ApplyModifiedPropertiesWithoutUndo();
+                ConfigurePunchVoice(relay, LoadPunchVoiceClips());
 
                 mover.Mecanim = animator;
                 // 移动由 Rigidbody Mover 完成，禁用不同 Animator 上的内置 Root Motion 调用。
@@ -294,6 +298,10 @@ namespace Brawl.EditorTools
                     && hero.Hand != null
                     && relay != null
                     && relay.Target == hero
+                    && relay.PunchVoiceSource != null
+                    && relay.PunchVoiceClips != null
+                    && relay.PunchVoiceClips.Length == 1
+                    && relay.PunchVoiceClips.All(clip => clip != null)
                     && catchParent != null
                     && catchParent.TargetParent != null
                     && animator.GetComponentsInChildren<Renderer>(true).Any(renderer => renderer.enabled);
@@ -307,6 +315,88 @@ namespace Brawl.EditorTools
                 throw new InvalidOperationException("BrawlCharacterCatalog 必须包含四个有效角色 Prefab。");
 
             Debug.Log("BRAWL_CHARACTER_VALIDATE: SUCCESS - 4 prefabs, humanoid avatars, animator, punch relay and catch bones are valid.");
+        }
+
+        [MenuItem("Brawl/Assign Punch Voice Audio To Four Prefabs")]
+        public static void AssignPunchVoiceAudioToPrefabs()
+        {
+            AudioClip[] clips = LoadPunchVoiceClips();
+
+            foreach (CharacterDefinition character in Characters)
+            {
+                string prefabPath = PrefabPath(character);
+                GameObject root = PrefabUtility.LoadPrefabContents(prefabPath);
+
+                try
+                {
+                    PunchAnimationEventRelay relay = root.GetComponentInChildren<PunchAnimationEventRelay>(true);
+                    if (relay == null)
+                        throw new InvalidOperationException($"角色缺少 PunchAnimationEventRelay: {prefabPath}");
+
+                    bool alreadyConfigured = relay.PunchVoiceSource != null
+                        && relay.PunchVoiceClips != null
+                        && relay.PunchVoiceClips.SequenceEqual(clips);
+
+                    if (alreadyConfigured) continue;
+
+                    ConfigurePunchVoice(relay, clips);
+                    PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+                    Debug.Log($"BRAWL_PUNCH_VOICE: assigned to {prefabPath}");
+                }
+                finally
+                {
+                    PrefabUtility.UnloadPrefabContents(root);
+                }
+            }
+
+            AssetDatabase.SaveAssets();
+        }
+
+        static AudioClip[] LoadPunchVoiceClips()
+        {
+            AudioClip qu = AssetDatabase.LoadAssetAtPath<AudioClip>(PunchVoiceQuPath);
+            if (qu == null)
+                throw new InvalidOperationException("出拳语音尚未被 Unity 导入，请执行 Assets/Refresh 后重试。");
+
+            return new[] { qu };
+        }
+
+        static void ConfigurePunchVoice(PunchAnimationEventRelay relay, AudioClip[] clips)
+        {
+            AudioSource source = relay.GetComponent<AudioSource>();
+            if (source == null) source = relay.gameObject.AddComponent<AudioSource>();
+
+            source.playOnAwake = false;
+            source.loop = false;
+            source.volume = 0.9f;
+            source.spatialBlend = 1f;
+            source.dopplerLevel = 0f;
+            source.minDistance = 1f;
+            source.maxDistance = 14f;
+            source.rolloffMode = AudioRolloffMode.Logarithmic;
+            relay.ConfigurePunchVoice(source, clips);
+            EditorUtility.SetDirty(source);
+            EditorUtility.SetDirty(relay);
+        }
+
+        static void AssignPunchVoiceAudioToLoadedSceneObjects()
+        {
+            AudioClip[] clips = LoadPunchVoiceClips();
+
+            foreach (PunchAnimationEventRelay relay in Resources.FindObjectsOfTypeAll<PunchAnimationEventRelay>())
+            {
+                if (relay == null || EditorUtility.IsPersistent(relay) || !relay.gameObject.scene.IsValid())
+                    continue;
+
+                bool alreadyConfigured = relay.PunchVoiceSource != null
+                    && relay.PunchVoiceClips != null
+                    && relay.PunchVoiceClips.SequenceEqual(clips);
+                if (alreadyConfigured) continue;
+
+                ConfigurePunchVoice(relay, clips);
+                EditorSceneManager.MarkSceneDirty(relay.gameObject.scene);
+                Debug.Log($"BRAWL_PUNCH_VOICE: assigned to loaded scene object {relay.gameObject.name}");
+            }
         }
 
         static void EnsureOutputFolder()
