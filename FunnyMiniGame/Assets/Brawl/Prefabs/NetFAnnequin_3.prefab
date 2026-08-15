@@ -1006,6 +1006,9 @@ MonoBehaviour:
   Mover: {fileID: 3564859171455691896}
   Hero: {fileID: 5329428510307308376}
   Mecanim: {fileID: 1390834903889256355}
+  KnockdownGroundSeconds: 1.55
+  GetUpFaceSeconds: 1.35
+  GetUpBackSeconds: 1.65
 --- !u!114 &1838941396139686246
 MonoBehaviour:
   m_ObjectHideFlags: 0

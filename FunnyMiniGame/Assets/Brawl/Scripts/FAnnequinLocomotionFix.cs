@@ -18,7 +18,10 @@ namespace Brawl
         {
             owner = GetComponent<NetFAnnequinController>();
             mover = GetComponent<FBasic_RigidbodyMover>();
-            mecanim = GetComponent<Animator>();
+            // 换皮角色的有效 Animator 在 Man/Girl 子节点上；根 Animator 只是关闭的旧人偶壳。
+            mecanim = owner != null && owner.Mecanim != null
+                ? owner.Mecanim
+                : (mover != null && mover.Mecanim != null ? mover.Mecanim : GetComponent<Animator>());
         }
 
         void Start()
@@ -55,7 +58,7 @@ namespace Brawl
             stop.z = 0f;
             mover.Rigb.velocity = stop;
 
-            if (mecanim)
+            if (mecanim && mecanim.isActiveAndEnabled && mecanim.runtimeAnimatorController != null)
             {
                 mecanim.SetBool("Moving", false);
                 mecanim.SetFloat("Speed", 0f);
