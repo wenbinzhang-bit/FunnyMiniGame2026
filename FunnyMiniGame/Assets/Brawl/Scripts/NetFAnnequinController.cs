@@ -37,6 +37,7 @@ namespace Brawl
         [Header("KPI Computer Pickup")]
         [Min(0.5f)] public float ComputerPickupRange = 2f;
         [Range(10f, 180f)] public float ComputerPickupAngle = 100f;
+        [Min(0.1f)] public float ComputerPickupAnimationSeconds = 0.45f;
         public Vector3 ComputerHoldOffset = new Vector3(0f, 0.06f, 0.08f);
         public Vector3 ComputerHoldEuler = new Vector3(8f, 0f, 0f);
         [Min(0f)] public float ComputerDropForward = 0.8f;
@@ -79,7 +80,7 @@ namespace Brawl
         bool UsesServerPoseSync => poseSync != null && poseSync.enabled;
         public bool IsInKnockback => isServer && Time.time < knockbackUntil;
         public bool IsHoldingPlayer => heldPlayer != null;
-        public bool IsHoldingComputer => syncHoldingComputer;
+        public bool IsHoldingComputer => syncHoldingComputer || heldComputer != null;
         public bool IsGrabbed => grabber != null;
         public bool IsKnockedDown { get; private set; }
         public Vector3 KnockbackVelocity { get; private set; }
@@ -102,6 +103,7 @@ namespace Brawl
         double lastMovePoseSend;
         Coroutine throwFallback;
         Coroutine punchFallback;
+        Coroutine computerPickupRoutine;
         Coroutine knockdownRoutine;
         Coroutine visualFallRoutine;
         float knockbackUntil;
@@ -1430,7 +1432,7 @@ namespace Brawl
         {
             if (isServer)
             {
-                if (heldComputer != null)
+                if (heldComputer != null && syncHoldingComputer)
                     ServerHoldComputerAtHands();
                 if (heldPlayer != null)
                     ServerHoldPlayerAtHand();
@@ -1492,18 +1494,99 @@ namespace Brawl
             if (best == null || !best.ServerTryClaim(this)) return false;
 
             heldComputer = best;
+            float pickupSeconds = Mathf.Max(0.1f, ComputerPickupAnimationSeconds);
+            attackLockedUntil = Mathf.Max(attackLockedUntil, Time.time + pickupSeconds);
+            attackMovementLockedUntil = Mathf.Max(attackMovementLockedUntil, Time.time + pickupSeconds);
+            StopMovementForAttack();
+            PlayComputerPickupAnimation();
+            RpcPlayComputerPickup(pickupSeconds);
+
+            if (computerPickupRoutine != null) StopCoroutine(computerPickupRoutine);
+            computerPickupRoutine = StartCoroutine(FinishComputerPickup(best, pickupSeconds));
+            return true;
+        }
+
+        IEnumerator FinishComputerPickup(KpiComputerObjective computer, float pickupSeconds)
+        {
+            Vector3 startPosition = computer != null ? computer.transform.position : Vector3.zero;
+            Quaternion startRotation = computer != null ? computer.transform.rotation : Quaternion.identity;
+            float elapsed = 0f;
+            float liftStart = pickupSeconds * 0.55f;
+            while (elapsed < pickupSeconds)
+            {
+                if (heldComputer != computer || computer == null || IsKnockedDown || IsGrabbed || IsDead)
+                {
+                    computerPickupRoutine = null;
+                    yield break;
+                }
+
+                elapsed += Time.deltaTime;
+                if (elapsed >= liftStart)
+                {
+                    GetComputerHoldPose(out Vector3 targetPosition, out Quaternion targetRotation);
+                    float liftT = Mathf.SmoothStep(0f, 1f,
+                        Mathf.InverseLerp(liftStart, pickupSeconds, elapsed));
+                    computer.ServerMoveHeld(
+                        Vector3.Lerp(startPosition, targetPosition, liftT),
+                        Quaternion.Slerp(startRotation, targetRotation, liftT));
+                }
+                yield return null;
+            }
+
+            computerPickupRoutine = null;
+            if (heldComputer != computer || computer == null || IsKnockedDown || IsGrabbed || IsDead)
+                yield break;
+
             syncHoldingComputer = true;
+            FinishComputerPickupAnimation();
             ApplyComputerHoldingPose(true);
             ServerHoldComputerAtHands();
-            return true;
+            RpcFinishComputerPickup();
+        }
+
+        void PlayComputerPickupAnimation()
+        {
+            if (Mecanim == null) return;
+            Mecanim.CrossFadeInFixedTime("Force Grip", 0.08f, 0, 0f);
+        }
+
+        void FinishComputerPickupAnimation()
+        {
+            if (Mecanim != null)
+                Mecanim.CrossFadeInFixedTime("Idle", 0.08f, 0, 0f);
+        }
+
+        [ClientRpc]
+        void RpcPlayComputerPickup(float pickupSeconds)
+        {
+            if (isServer) return;
+            PlayComputerPickupAnimation();
+            if (isLocalPlayer)
+                BeginLocalAttackLocks(pickupSeconds, pickupSeconds);
+        }
+
+        [ClientRpc]
+        void RpcFinishComputerPickup()
+        {
+            if (isServer) return;
+            FinishComputerPickupAnimation();
+            ApplyComputerHoldingPose(true);
+        }
+
+        [ClientRpc]
+        void RpcCancelComputerPickup()
+        {
+            if (isServer) return;
+            FinishComputerPickupAnimation();
+            ApplyComputerHoldingPose(false);
         }
 
         [Server]
         void ServerHoldComputerAtHands()
         {
-            if (heldComputer == null)
+            if (heldComputer == null || !syncHoldingComputer)
             {
-                if (syncHoldingComputer)
+                if (heldComputer == null && syncHoldingComputer)
                 {
                     syncHoldingComputer = false;
                     ApplyComputerHoldingPose(false);
@@ -1511,6 +1594,12 @@ namespace Brawl
                 return;
             }
 
+            GetComputerHoldPose(out Vector3 holdPosition, out Quaternion holdRotation);
+            heldComputer.ServerMoveHeld(holdPosition, holdRotation);
+        }
+
+        void GetComputerHoldPose(out Vector3 holdPosition, out Quaternion holdRotation)
+        {
             Transform leftHand = null;
             Transform rightHand = Hero != null ? Hero.Hand : null;
             if (Mecanim != null && Mecanim.isHuman)
@@ -1520,7 +1609,6 @@ namespace Brawl
                     rightHand = Mecanim.GetBoneTransform(HumanBodyBones.RightHand);
             }
 
-            Vector3 holdPosition;
             if (leftHand != null && rightHand != null)
             {
                 holdPosition = (leftHand.position + rightHand.position) * 0.5f;
@@ -1540,18 +1628,25 @@ namespace Brawl
                     0.55f + ComputerHoldOffset.z));
             }
 
-            Quaternion holdRotation = Quaternion.LookRotation(transform.forward, Vector3.up)
+            holdRotation = Quaternion.LookRotation(transform.forward, Vector3.up)
                 * Quaternion.Euler(ComputerHoldEuler);
-            heldComputer.ServerMoveHeld(holdPosition, holdRotation);
         }
 
         [Server]
         void ServerReleaseComputer()
         {
+            if (computerPickupRoutine != null)
+            {
+                StopCoroutine(computerPickupRoutine);
+                computerPickupRoutine = null;
+            }
+
             KpiComputerObjective computer = heldComputer;
             heldComputer = null;
             syncHoldingComputer = false;
+            FinishComputerPickupAnimation();
             ApplyComputerHoldingPose(false);
+            RpcCancelComputerPickup();
             if (computer == null) return;
 
             Vector3 horizontalForward = Vector3.ProjectOnPlane(transform.forward, Vector3.up);

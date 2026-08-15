@@ -2187,7 +2187,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   sceneId: 0
-  _assetId: 243641140
+  _assetId: 0
   serverOnly: 0
   visibility: 0
   hasSpawned: 0
@@ -2260,12 +2260,21 @@ MonoBehaviour:
   Hero: {fileID: 6790123655845520645}
   Mecanim: {fileID: 6887193896182062763}
   Ragdoll: {fileID: 8384226415399813767}
+  PunchAnimationLockSeconds: 1.25
+  PunchMovementLockSeconds: 1.23
+  UppercutAnimationLockSeconds: 0.8
   PunchHitRange: 1.55
   PunchHitAngle: 55
   PunchPointBlankRange: 0.8
   HitVoiceClip: {fileID: 8300000, guid: 0ad0ad27cf78f58428fb61fd64511316, type: 3}
   HitVoiceVolume: 0.9
   HitVoicePitchRange: {x: 0.96, y: 1.04}
+  ComputerPickupRange: 2
+  ComputerPickupAngle: 100
+  ComputerPickupAnimationSeconds: 0.45
+  ComputerHoldOffset: {x: 0, y: 0.06, z: 0.08}
+  ComputerHoldEuler: {x: 8, y: 0, z: 0}
+  ComputerDropForward: 0.8
   KnockdownGroundSeconds: 1.55
   GetUpFaceSeconds: 1.35
   GetUpBackSeconds: 1.65
@@ -2299,6 +2308,13 @@ MonoBehaviour:
   syncInterval: 0
   FollowOffset: {x: 0, y: 1.2, z: 0}
   DistanceRanges: {x: 2.5, y: 8}
+  HorizontalRotationSensitivity: 3
+  VerticalRotationSensitivityMultiplier: 0.4
+  VerticalRotationRanges: {x: 2, y: 45}
+  RotationSpeed: 0.65
+  MinimumHeightAboveFollowPoint: 0.1
+  VerticalFollowSmoothTime: 0.18
+  VerticalFollowDeadZone: 0.15
 --- !u!114 &3980083788954008479
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -5150,11 +5166,11 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 400082, guid: 1b8be1694ff3425458edc2c0a923adb9, type: 3}
       propertyPath: m_LocalRotation.x
-      value: -0.006885923
+      value: -0.0068859234
       objectReference: {fileID: 0}
     - target: {fileID: 400082, guid: 1b8be1694ff3425458edc2c0a923adb9, type: 3}
       propertyPath: m_LocalRotation.z
-      value: -0.16065386
+      value: -0.16065387
       objectReference: {fileID: 0}
     - target: {fileID: 400114, guid: 1b8be1694ff3425458edc2c0a923adb9, type: 3}
       propertyPath: m_LocalPosition.x
@@ -5199,7 +5215,7 @@ PrefabInstance:
     - target: {fileID: 9500000, guid: 1b8be1694ff3425458edc2c0a923adb9, type: 3}
       propertyPath: m_Controller
       value: 
-      objectReference: {fileID: 9100000, guid: 53ea28f91a55f6d4f9672445148df8dc, type: 2}
+      objectReference: {fileID: 22100000, guid: 93e084a1b1c943041a31a551fed60dc0, type: 2}
     - target: {fileID: 9500000, guid: 1b8be1694ff3425458edc2c0a923adb9, type: 3}
       propertyPath: m_CullingMode
       value: 0
