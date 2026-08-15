@@ -41,6 +41,15 @@ namespace Brawl
             base.OnStartServer();
         }
 
+        public override void OnStartClient()
+        {
+            EnsurePlayerModels();
+            ApplyFirstPrefabAsPlayerPrefab();
+            RegisterPlayerModelPrefabs();
+            RegisterPrefabsWithClient();
+            base.OnStartClient();
+        }
+
         void EnsurePlayerModels()
         {
             if (playerModels != null)
@@ -79,15 +88,32 @@ namespace Brawl
 
             foreach (GameObject prefab in playerModels.prefabs)
             {
-                if (prefab == null || prefab == playerPrefab)
-                    continue;
-
-                if (!prefab.TryGetComponent(out NetworkIdentity identity) || identity.assetId == 0)
+                if (!HasSpawnableAssetId(prefab))
                     continue;
 
                 if (!spawnPrefabs.Contains(prefab))
                     spawnPrefabs.Add(prefab);
             }
+        }
+
+        void RegisterPrefabsWithClient()
+        {
+            if (HasSpawnableAssetId(playerPrefab))
+                NetworkClient.RegisterPrefab(playerPrefab);
+
+            if (spawnPrefabs == null) return;
+            foreach (GameObject prefab in spawnPrefabs)
+            {
+                if (HasSpawnableAssetId(prefab))
+                    NetworkClient.RegisterPrefab(prefab);
+            }
+        }
+
+        static bool HasSpawnableAssetId(GameObject prefab)
+        {
+            return prefab != null
+                && prefab.TryGetComponent(out NetworkIdentity identity)
+                && identity.assetId != 0;
         }
 
         GameObject ResolvePlayerPrefab(int playerIndex)
@@ -112,6 +138,30 @@ namespace Brawl
             return playerPrefab;
         }
 
+        GameObject ResolveBotPrefab()
+        {
+            if (playerModels != null && playerModels.prefabs != null)
+            {
+                for (int i = playerModels.prefabs.Length - 1; i >= 0; i--)
+                {
+                    GameObject candidate = playerModels.prefabs[i];
+                    if (HasSpawnableAssetId(candidate))
+                        return candidate;
+                }
+            }
+
+            if (spawnPrefabs != null)
+            {
+                foreach (GameObject candidate in spawnPrefabs)
+                {
+                    if (HasSpawnableAssetId(candidate) && candidate.GetComponent<NetFAnnequinController>() != null)
+                        return candidate;
+                }
+            }
+
+            return HasSpawnableAssetId(playerPrefab) ? playerPrefab : null;
+        }
+
         bool CanSpawnForClients(GameObject prefab)
         {
             if (prefab == null) return false;
@@ -126,6 +176,8 @@ namespace Brawl
 
             int playerIndex = nextPlayerIndex++;
             GameObject prefab = ResolvePlayerPrefab(playerIndex);
+            if (prefab == null)
+                prefab = playerPrefab;
             if (prefab == null)
             {
                 Debug.LogError("BrawlNetworkManager: 没有可用的玩家预制体,无法加入");
@@ -194,23 +246,31 @@ namespace Brawl
         {
             EnsurePlayerModels();
             ApplyFirstPrefabAsPlayerPrefab();
+            RegisterPlayerModelPrefabs();
 
-            int playerIndex = nextPlayerIndex++;
-            GameObject prefab = ResolvePlayerPrefab(playerIndex);
-            if (!CanSpawnForClients(prefab))
+            GameObject prefab = ResolveBotPrefab();
+            if (!HasSpawnableAssetId(prefab))
             {
-                Debug.LogError("BrawlNetworkManager: 没有可用的 Bot 预制体");
+                Debug.LogError("BrawlNetworkManager: 没有可同步给客户端的 Bot 预制体");
                 return false;
             }
 
-            Transform start = GetStartPosition();
-            Vector3 origin = start != null ? start.position : Vector3.up * 2f;
-            Vector3 offset = Quaternion.Euler(0f, 80f * playerIndex, 0f) * Vector3.forward * 2.4f;
+            if (!spawnPrefabs.Contains(prefab))
+                spawnPrefabs.Add(prefab);
+            NetworkClient.RegisterPrefab(prefab);
+
+            int botIndex = BrawlBotBrain.AliveCount;
+            Vector3 origin = Vector3.up * 2f;
+            NetworkStartPosition[] starts = FindObjectsOfType<NetworkStartPosition>();
+            if (starts != null && starts.Length > 0 && starts[0] != null)
+                origin = starts[0].transform.position;
+
+            Vector3 offset = Quaternion.Euler(0f, 80f * (botIndex + 1), 0f) * Vector3.forward * 2.4f;
             Vector3 pos = origin + offset;
             pos.y = origin.y + 1f;
 
             GameObject bot = Instantiate(prefab, pos, Quaternion.LookRotation(-offset.normalized, Vector3.up));
-            bot.name = $"{prefab.name} [bot={playerIndex}]";
+            bot.name = $"{prefab.name} [bot={botIndex}]";
 
             var mouse = bot.GetComponent<FAnnequinMouseActions>();
             if (mouse != null) mouse.enabled = false;
