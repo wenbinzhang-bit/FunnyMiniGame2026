@@ -1007,7 +1007,7 @@ MonoBehaviour:
   PunchAnimationLockSeconds: 1.25
   PunchMovementLockSeconds: 1.23
   UppercutAnimationLockSeconds: 0.8
-  PunchHitRange: 0.8
+  PunchHitRange: 1.5
   PunchHitAngle: 55
   PunchPointBlankRange: 0.55
   HitVoiceClip: {fileID: 8300000, guid: 0ad0ad27cf78f58428fb61fd64511316, type: 3}

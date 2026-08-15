@@ -634,7 +634,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 1
+  m_IsActive: 0
 --- !u!224 &4315110585119907460
 RectTransform:
   m_ObjectHideFlags: 0
@@ -2850,17 +2850,10 @@ MonoBehaviour:
     Score: {fileID: 8613724474040783698}
     BarFill: {fileID: 2450499517718555912}
     Frame: {fileID: 1538921850120560995}
-  HealthTitle: {fileID: 2296312936022766814}
-  HealthName: {fileID: 1040342108795440242}
-  HealthValue: {fileID: 3201391037042699202}
-  HealthFill: {fileID: 6042697509144164511}
   RankingRoot: {fileID: 1348112992391312462}
   RankingBody: {fileID: 6775687529377005382}
   IdleFrameColor: {r: 0.08, g: 0.08, b: 0.08, a: 0.72}
   HoldingFrameColor: {r: 1, g: 0.86, b: 0.28, a: 0.95}
-  HealthOkColor: {r: 0.25, g: 0.82, b: 0.38, a: 1}
-  HealthLowColor: {r: 0.9, g: 0.25, b: 0.2, a: 1}
-  HealthDeadColor: {r: 0.55, g: 0.16, b: 0.14, a: 1}
   TimerNormalColor: {r: 1, g: 1, b: 1, a: 1}
   TimerWarningColor: {r: 1, g: 0.22, b: 0.18, a: 1}
   TimerWarningFlashColor: {r: 1, g: 0.82, b: 0.2, a: 1}

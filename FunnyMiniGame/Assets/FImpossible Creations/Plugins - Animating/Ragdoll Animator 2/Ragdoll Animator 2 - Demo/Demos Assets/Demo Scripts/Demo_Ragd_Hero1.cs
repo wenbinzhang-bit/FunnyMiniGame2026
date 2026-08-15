@@ -689,7 +689,15 @@ namespace FIMSpace.RagdollAnimatorDemo
 
         static bool IsNetworkedPlayerRagdoll( RagdollHandler rag )
         {
-            Transform root = rag != null ? rag.GetBaseTransform() : null;
+            if( rag == null ) return false;
+
+            // RA2 的物理骨架可能生成在角色层级之外，GetBaseTransform() 因此不一定能找到
+            // 联机玩家根节点。Mecanim 始终指向玩家的可视模型，先沿它的父级识别玩家，
+            // 避免 Demo 自带的宽拳击盒（可达约 2.4m）绕过服务器的短距离判定。
+            if( rag.Mecanim != null && rag.Mecanim.GetComponentInParent<FAnnequinMeleeVictim>() != null )
+                return true;
+
+            Transform root = rag.GetBaseTransform();
             return root != null && root.GetComponentInParent<FAnnequinMeleeVictim>() != null;
         }
 

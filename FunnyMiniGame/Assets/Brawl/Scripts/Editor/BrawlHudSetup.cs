@@ -79,7 +79,6 @@ namespace Brawl.EditorTools
             SetRect(hud.StatusText.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, -8f), new Vector2(900f, 28f));
             hud.StatusText.text = "等待开局";
 
-            CreateHealth(root.transform, hud, uiSprite, font);
             CreateControls(root.transform, font);
             CreateRanking(root.transform, hud, uiSprite, font);
 
@@ -137,42 +136,6 @@ namespace Brawl.EditorTools
             slot.Score.text = "0/99";
             SetRect(slot.Score.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 0.5f), new Vector2(58f, -12f), new Vector2(60f, 22f));
             return slot;
-        }
-
-        static void CreateHealth(Transform parent, BrawlMatchHud hud, Sprite uiSprite, Font font)
-        {
-            RectTransform panel = CreateRect(parent, "Health", new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(24f, -168f), new Vector2(268f, 108f));
-            Image bg = CreateImage(panel, "Back", uiSprite, new Color(0f, 0f, 0f, 0.58f), Vector2.zero, Vector2.zero);
-            bg.type = Image.Type.Sliced;
-            Stretch(bg.rectTransform);
-
-            hud.HealthTitle = CreateText(panel, "Title", 18, TextAnchor.MiddleLeft, Color.white, font);
-            hud.HealthTitle.fontStyle = FontStyle.Bold;
-            hud.HealthTitle.text = "血量";
-            SetRect(hud.HealthTitle.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f), new Vector2(14f, -8f), new Vector2(-28f, 24f));
-
-            hud.HealthName = CreateText(panel, "Name", 16, TextAnchor.MiddleLeft, new Color(0.45f, 0.95f, 0.55f), font);
-            hud.HealthName.fontStyle = FontStyle.Bold;
-            hud.HealthName.text = "自己  P1";
-            SetRect(hud.HealthName.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f), new Vector2(14f, -32f), new Vector2(-28f, 22f));
-
-            Image barBack = CreateImage(panel, "BarBack", uiSprite, new Color(0.12f, 0.12f, 0.12f, 0.95f), Vector2.zero, Vector2.zero);
-            barBack.type = Image.Type.Sliced;
-            SetRect(barBack.rectTransform, new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 16f), new Vector2(-28f, 18f));
-            barBack.rectTransform.offsetMin = new Vector2(14f, 16f);
-            barBack.rectTransform.offsetMax = new Vector2(-14f, 34f);
-
-            hud.HealthFill = CreateImage(barBack.transform, "Fill", uiSprite, new Color(0.25f, 0.82f, 0.38f), Vector2.zero, Vector2.zero);
-            RectTransform fill = hud.HealthFill.rectTransform;
-            fill.anchorMin = Vector2.zero;
-            fill.anchorMax = Vector2.one;
-            fill.offsetMin = Vector2.zero;
-            fill.offsetMax = Vector2.zero;
-            fill.pivot = new Vector2(0f, 0.5f);
-
-            hud.HealthValue = CreateText(barBack.transform, "Value", 14, TextAnchor.MiddleCenter, Color.white, font);
-            hud.HealthValue.text = "100/100";
-            Stretch(hud.HealthValue.rectTransform);
         }
 
         static void CreateControls(Transform parent, Font font)

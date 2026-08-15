@@ -8,7 +8,7 @@ namespace Brawl
     /// <summary>
     /// MiniGame_01 服务端权威对局:
     /// 持有电脑每 0.5 秒得分；被打后电脑落地、持有者被打飞；倒计时结束按分数排名。
-    /// 掉出场地或倒下会回出生点，不淘汰。
+    /// 掉出场地会回出生点，不淘汰；受击只触发布娃娃倒地和起身。
     /// </summary>
     public class BrawlGameManager : NetworkBehaviour
     {
@@ -34,9 +34,6 @@ namespace Brawl
 
         [Tooltip("开局所需最少人数。单人 Host 调试时用 1")]
         [Min(1)] public int MinPlayersToStart = 1;
-
-        [Tooltip("血量归零后回场秒数")]
-        [Min(0.5f)] public float DeadReviveDelay = 2f;
 
         [Tooltip("得分上限，也是进度条满分。任一玩家达到后立即结束并按当前分数结算")]
         [Min(1)] public int HudScoreMax = 99;
@@ -65,7 +62,6 @@ namespace Brawl
         {
             public NetworkConnectionToClient conn;
             public IBrawlPlayer motor;
-            public double reviveAt;
         }
 
         readonly List<PlayerEntry> players = new List<PlayerEntry>();
@@ -100,8 +96,6 @@ namespace Brawl
 
             players.Add(new PlayerEntry { conn = null, motor = motor });
             motor.InputActive = state != EState.RoundEnd;
-            if (motor.Attributes != null)
-                motor.Attributes.ServerResetHealth();
 
             Transform start = NetworkManager.singleton != null
                 ? NetworkManager.singleton.GetStartPosition()
@@ -144,7 +138,7 @@ namespace Brawl
         void ServerUpdateWaiting()
         {
             foreach (var p in players)
-                ServerRescueIfNeeded(p, immediate: true);
+                ServerRescueIfNeeded(p);
 
             ServerRescueLooseComputers();
             ServerTickHoldScores();
@@ -167,13 +161,10 @@ namespace Brawl
             int i = 0;
             foreach (var p in players)
             {
-                p.reviveAt = 0;
                 p.motor.Score = 0;
                 p.motor.InputActive = true;
                 if (p.motor is NetFAnnequinController fan)
                     fan.ServerResetTurbo();
-                if (p.motor.Attributes != null)
-                    p.motor.Attributes.ServerResetHealth();
                 Transform start = NetworkManager.singleton.GetStartPosition();
                 Vector3 pos = start != null ? start.position : new Vector3(i * 2f, 3f, 0f);
                 p.motor.SpawnPosition = pos;
@@ -201,7 +192,7 @@ namespace Brawl
                 return;
 
             foreach (var p in players)
-                ServerRescueIfNeeded(p, immediate: false);
+                ServerRescueIfNeeded(p);
 
             ServerRescueLooseComputers();
             rankText = RankLine();
@@ -287,7 +278,7 @@ namespace Brawl
 
             PlayerEntry holder = FindPlayer(netId);
             IBrawlPlayer motor = holder != null ? holder.motor : FindSpawnedPlayer(netId);
-            if (motor == null || motor.IsDead) return;
+            if (motor == null) return;
             if (motor is NetFAnnequinController fan && fan.IsKnockedDown) return;
 
             int cap = Mathf.Max(1, HudScoreMax);
@@ -307,41 +298,21 @@ namespace Brawl
         }
 
         [Server]
-        void ServerRescueIfNeeded(PlayerEntry p, bool immediate)
+        void ServerRescueIfNeeded(PlayerEntry p)
         {
             if (p?.motor == null || p.motor.Transform == null) return;
-
-            bool fell = p.motor.Transform.position.y < KillY;
-            bool dead = p.motor.IsDead;
-            if (!fell && !dead)
-            {
-                p.reviveAt = 0;
-                return;
-            }
-
-            if (dead && !immediate)
-            {
-                if (p.reviveAt <= 0)
-                    p.reviveAt = NetworkTime.time + DeadReviveDelay;
-                if (NetworkTime.time < p.reviveAt)
-                    return;
-            }
-
-            ServerRevive(p);
+            if (p.motor.Transform.position.y < KillY)
+                ServerRescue(p);
         }
 
         [Server]
-        void ServerRevive(PlayerEntry p)
+        void ServerRescue(PlayerEntry p)
         {
-            p.reviveAt = 0;
             if (p.motor is NetFAnnequinController fan)
             {
                 fan.ServerForceDropComputer();
                 fan.ServerResetTurbo();
             }
-            if (p.motor.Attributes != null)
-                p.motor.Attributes.ServerResetHealth();
-
             Vector3 spawn = p.motor.SpawnPosition;
             if (spawn.sqrMagnitude < 0.01f)
                 spawn = new Vector3(0f, 3f, 0f);

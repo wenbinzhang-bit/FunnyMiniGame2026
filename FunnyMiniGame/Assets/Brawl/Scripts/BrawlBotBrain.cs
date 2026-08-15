@@ -79,7 +79,7 @@ namespace Brawl
             if (holder != null && holder != self)
             {
                 Vector3 to = Flat(holder.transform.position - self.transform.position);
-                if (to.magnitude <= 0.8f)
+                if (to.magnitude <= 1.5f)
                 {
                     self.ServerBotFace(to);
                     self.ServerBotSetMove(Vector3.zero);

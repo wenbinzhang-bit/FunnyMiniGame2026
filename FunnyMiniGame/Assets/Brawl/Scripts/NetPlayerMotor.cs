@@ -45,7 +45,7 @@ namespace Brawl
         public uint NetId => netId;
         public Transform Transform => transform;
         public PlayerAttributes Attributes { get; private set; }
-        public bool IsDead => Attributes != null && Attributes.IsDead;
+        public bool IsDead => false;
 
         /// <summary>服务端:是否接受该玩家的移动输入(对局管理器可冻结)。</summary>
         public bool InputActive { get; set; } = true;

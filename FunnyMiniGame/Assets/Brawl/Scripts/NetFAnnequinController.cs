@@ -25,7 +25,7 @@ namespace Brawl
         [Min(0.1f)] public float UppercutAnimationLockSeconds = 0.8f;
 
         [Header("Player Punch Hit Detection")]
-        [Min(0.5f)] public float PunchHitRange = 0.8f;
+        [Min(0.5f)] public float PunchHitRange = 1.5f;
         [Range(10f, 120f)] public float PunchHitAngle = 55f;
         [Min(0f)] public float PunchPointBlankRange = 0.55f;
 
@@ -82,7 +82,7 @@ namespace Brawl
         public uint NetId => netId;
         public Transform Transform => transform;
         public PlayerAttributes Attributes => attributes;
-        public bool IsDead => attributes != null && attributes.IsDead;
+        public bool IsDead => false;
         public bool WantsToMove => pendingMove.sqrMagnitude > 0.0001f;
         public bool IsMoveAuthority => Mover != null && Mover.Rigb != null && !Mover.Rigb.isKinematic && (isServer || isLocalPlayer);
         bool UsesServerPoseSync => poseSync != null && poseSync.enabled;
@@ -197,7 +197,9 @@ namespace Brawl
 
             meleeVictim = GetComponent<FAnnequinMeleeVictim>();
             if (meleeVictim == null) meleeVictim = gameObject.AddComponent<FAnnequinMeleeVictim>();
-            meleeVictim.OnHitByMelee = ServerReceiveMeleeHit;
+            // Demo 自带的玩家拳击盒最远会搜索到 2.8 米，不能让它直接触发联机玩家倒地。
+            // 联机玩家命中统一走 ServerPunchPlayers 的短距离服务器判定。
+            meleeVictim.OnHitByMelee = null;
             netTransform = GetComponent<NetworkTransformReliable>();
             poseSync = GetComponent<RagdollNetworkSync>();
             moveSync = GetComponent<BrawlMoveSync>();
@@ -224,10 +226,7 @@ namespace Brawl
             if (Hero != null)
                 Hero.OnMeleeHit = ServerOnHeroMeleeHit;
             if (meleeVictim != null)
-                meleeVictim.OnHitByMelee = ServerReceiveMeleeHit;
-            if (attributes != null)
-                attributes.Died += ServerOnDied;
-
+                meleeVictim.OnHitByMelee = null;
             ConfigureNetworkSync();
             DisableLocalDemoInput();
             ServerIgnoreComputerCollisions();
@@ -323,9 +322,7 @@ namespace Brawl
 
         public override void OnStartLocalPlayer()
         {
-            if (mouseActions) mouseActions.enabled = !IsDead;
-            if (attributes != null)
-                attributes.HealthChanged += OnLocalHealthChanged;
+            if (mouseActions) mouseActions.enabled = true;
             if (!isServer && !UsesServerPoseSync && Mover != null)
             {
                 Mover.enabled = true;
@@ -339,26 +336,10 @@ namespace Brawl
 
         public override void OnStopLocalPlayer()
         {
-            if (attributes != null)
-                attributes.HealthChanged -= OnLocalHealthChanged;
             if (mouseActions)
             {
                 mouseActions.CancelHold();
                 mouseActions.enabled = false;
-            }
-        }
-
-        void OnLocalHealthChanged(int current, int max)
-        {
-            if (mouseActions == null) return;
-            if (current <= 0)
-            {
-                mouseActions.CancelHold();
-                mouseActions.enabled = false;
-            }
-            else if (isLocalPlayer)
-            {
-                mouseActions.enabled = true;
             }
         }
 
@@ -860,14 +841,6 @@ namespace Brawl
         }
 
         [Server]
-        void ServerReceiveMeleeHit(Vector3 impactDirection)
-        {
-            Vector3 dir = impactDirection.sqrMagnitude > 0.01f ? impactDirection.normalized : -transform.forward;
-            if (dir.y < 0.35f) dir.y = 0.35f;
-            ServerKnockDown(dir.normalized * 11f);
-        }
-
-        [Server]
         void ServerPunchPlayers(byte kind)
         {
             Vector3 dir = kind == 0
@@ -1016,8 +989,6 @@ namespace Brawl
             lastReceivedHitTime = Time.time;
             if (isClient) PlayHitVoice();
             RpcPlayHitVoice();
-            if (attributes != null && damage > 0)
-                attributes.ServerTakeDamage(damage);
             serverCatching = false;
             if (heldComputer != null)
             {
@@ -1079,12 +1050,6 @@ namespace Brawl
                 BeginVisualFall(visualFallForward);
             RpcKnockDown(true, "Fall", visualFallForward, physicalRagdollActive);
 
-            if (IsDead)
-            {
-                ServerStayDown();
-                return;
-            }
-
             if (knockdownRoutine != null) StopCoroutine(knockdownRoutine);
             knockdownRoutine = StartCoroutine(KnockdownRoutine());
         }
@@ -1134,55 +1099,6 @@ namespace Brawl
             Ragdoll.User_AddRigidbodyImpact(
                 core, impactDirection * (punchPower * 1.5f), 0f, ForceMode.Impulse);
             return true;
-        }
-
-        [Server]
-        void ServerOnDied()
-        {
-            ServerStayDown();
-        }
-
-        [Server]
-        void ServerStayDown()
-        {
-            serverCatching = false;
-            if (grabber != null)
-                grabber.ServerReleaseHeldPlayer(Vector3.zero, false);
-            if (heldComputer != null)
-                ServerReleaseComputer(true);
-            if (heldPlayer != null)
-                ServerReleaseHeldPlayer(Vector3.zero, false);
-
-            IsKnockedDown = true;
-            InputActive = false;
-            pendingMove = Vector3.zero;
-            if (knockdownRoutine != null)
-            {
-                StopCoroutine(knockdownRoutine);
-                knockdownRoutine = null;
-            }
-
-            if (mouseActions)
-            {
-                mouseActions.CancelHold();
-                mouseActions.enabled = false;
-            }
-
-            if (physicalRagdollActive && Ragdoll != null && Ragdoll.Handler.WasInitialized)
-            {
-                // Sleep 保留死亡布娃娃，同时阻止 Auto Get Up。
-                Ragdoll.User_SwitchFallState(RagdollHandler.EAnimatingMode.Sleep);
-            }
-            else if (Mecanim)
-            {
-                Mecanim.SetBool("Ragdolled", false);
-                Mecanim.SetBool("Grounded", false);
-                Mecanim.SetBool("Moving", false);
-                Mecanim.CrossFadeInFixedTime("Fall", 0.08f, 0);
-            }
-            if (!physicalRagdollActive)
-                BeginVisualFall(visualFallForward);
-            RpcKnockDown(true, "Fall", visualFallForward, physicalRagdollActive);
         }
 
         [Server]
@@ -1616,8 +1532,6 @@ namespace Brawl
 
         public override void OnStopServer()
         {
-            if (attributes != null)
-                attributes.Died -= ServerOnDied;
             if (heldComputer != null)
                 ServerReleaseComputer(true);
             if (heldPlayer != null)

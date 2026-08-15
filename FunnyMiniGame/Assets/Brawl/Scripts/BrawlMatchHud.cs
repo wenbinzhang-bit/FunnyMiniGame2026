@@ -8,6 +8,7 @@ namespace Brawl
 {
     /// <summary>
     /// MiniGame_01 对局 HUD。刷新已有 UGUI，并在旧 HUD Prefab 缺少时补建本地 Turbo 条。
+    /// 血量玩法已移除，旧 Prefab 中残留的 Health 节点会在启动时隐藏。
     /// </summary>
     [DefaultExecutionOrder(100)]
     public sealed class BrawlMatchHud : MonoBehaviour
@@ -29,12 +30,6 @@ namespace Brawl
         public Text StatusText;
         public PlayerSlot[] Slots = new PlayerSlot[4];
 
-        [Header("Local Health")]
-        public Text HealthTitle;
-        public Text HealthName;
-        public Text HealthValue;
-        public Image HealthFill;
-
         [Header("Local Turbo")]
         public Text TurboTitle;
         public Text TurboValue;
@@ -47,9 +42,6 @@ namespace Brawl
         [Header("Colors")]
         public Color IdleFrameColor = new Color(0.08f, 0.08f, 0.08f, 0.72f);
         public Color HoldingFrameColor = new Color(1f, 0.86f, 0.28f, 0.95f);
-        public Color HealthOkColor = new Color(0.25f, 0.82f, 0.38f);
-        public Color HealthLowColor = new Color(0.9f, 0.25f, 0.2f);
-        public Color HealthDeadColor = new Color(0.55f, 0.16f, 0.14f);
         public Color TurboReadyColor = new Color(0.12f, 0.86f, 1f);
         public Color TurboLowColor = new Color(1f, 0.55f, 0.12f);
         public Color TurboEmptyColor = new Color(0.85f, 0.18f, 0.14f);
@@ -76,6 +68,7 @@ namespace Brawl
 
         void Awake()
         {
+            HideLegacyHealthUi();
             EnsureTurboVisuals();
             ApplyCjkFont();
             CacheTimerVisuals();
@@ -109,7 +102,6 @@ namespace Brawl
             for (int i = 0; i < slotCount; i++)
                 BindSlot(Slots[i], i, i < hudPlayers.Count ? hudPlayers[i] : null, scoreMax);
 
-            BindLocalHealth();
             BindLocalTurbo();
             BindRanking(gm);
         }
@@ -136,49 +128,6 @@ namespace Brawl
             {
                 bool holding = player is NetFAnnequinController fan && fan.IsHoldingComputer;
                 slot.Frame.color = holding ? HoldingFrameColor : IdleFrameColor;
-            }
-        }
-
-        void BindLocalHealth()
-        {
-            PlayerAttributes local = null;
-            uint netId = 0;
-            for (int i = 0; i < hudPlayers.Count; i++)
-            {
-                if (hudPlayers[i] is NetworkBehaviour nb && nb.isLocalPlayer)
-                {
-                    local = hudPlayers[i].Attributes;
-                    netId = hudPlayers[i].NetId;
-                    break;
-                }
-            }
-
-            if (local == null)
-            {
-                if (HealthName != null) HealthName.text = "等待加入";
-                if (HealthValue != null) HealthValue.text = "--/--";
-                SetFill(HealthFill, 0f);
-                return;
-            }
-
-            if (HealthTitle != null) HealthTitle.text = "血量";
-            if (HealthName != null)
-            {
-                HealthName.text = BrawlHudNames.LocalLabel(netId);
-                HealthName.color = new Color(0.45f, 0.95f, 0.55f);
-            }
-
-            if (HealthValue != null)
-                HealthValue.text = local.IsDead ? "倒下" : $"{local.CurrentHealth}/{local.MaxHealth}";
-
-            if (HealthFill != null)
-            {
-                HealthFill.color = local.IsDead
-                    ? HealthDeadColor
-                    : local.HealthNormalized <= 0.3f
-                        ? HealthLowColor
-                        : HealthOkColor;
-                SetFill(HealthFill, local.HealthNormalized);
             }
         }
 
@@ -228,7 +177,11 @@ namespace Brawl
 
         void EnsureTurboVisuals()
         {
-            if (TurboTitle != null && TurboValue != null && TurboFill != null) return;
+            if (TurboTitle != null && TurboValue != null && TurboFill != null)
+            {
+                PositionTurboPanel(TurboTitle.transform);
+                return;
+            }
 
             Transform existing = transform.Find("Turbo");
             if (existing != null)
@@ -236,11 +189,15 @@ namespace Brawl
                 TurboTitle = existing.Find("Title")?.GetComponent<Text>();
                 TurboValue = existing.Find("BarBack/Value")?.GetComponent<Text>();
                 TurboFill = existing.Find("BarBack/Fill")?.GetComponent<Image>();
-                if (TurboTitle != null && TurboValue != null && TurboFill != null) return;
+                if (TurboTitle != null && TurboValue != null && TurboFill != null)
+                {
+                    PositionTurboPanel(existing);
+                    return;
+                }
             }
 
-            Font fallbackFont = HealthTitle != null && HealthTitle.font != null
-                ? HealthTitle.font
+            Font fallbackFont = TimerText != null && TimerText.font != null
+                ? TimerText.font
                 : Resources.GetBuiltinResource<Font>("Arial.ttf");
 
             GameObject panelObject = new GameObject("Turbo", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
@@ -249,7 +206,7 @@ namespace Brawl
             panel.anchorMin = new Vector2(0f, 1f);
             panel.anchorMax = new Vector2(0f, 1f);
             panel.pivot = new Vector2(0f, 1f);
-            panel.anchoredPosition = new Vector2(24f, -286f);
+            panel.anchoredPosition = new Vector2(24f, -168f);
             panel.sizeDelta = new Vector2(268f, 48f);
             Image panelImage = panelObject.GetComponent<Image>();
             panelImage.color = new Color(0f, 0f, 0f, 0.72f);
@@ -313,6 +270,20 @@ namespace Brawl
             Outline outline = valueObject.AddComponent<Outline>();
             outline.effectColor = new Color(0f, 0f, 0f, 0.75f);
             outline.effectDistance = new Vector2(1f, -1f);
+        }
+
+        void HideLegacyHealthUi()
+        {
+            Transform health = transform.Find("Health");
+            if (health != null) health.gameObject.SetActive(false);
+        }
+
+        static void PositionTurboPanel(Transform child)
+        {
+            Transform current = child;
+            while (current != null && current.name != "Turbo") current = current.parent;
+            if (current is RectTransform panel)
+                panel.anchoredPosition = new Vector2(24f, -168f);
         }
 
         void BindRanking(BrawlGameManager gm)
