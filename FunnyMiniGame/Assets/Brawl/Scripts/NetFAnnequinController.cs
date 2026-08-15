@@ -35,8 +35,8 @@ namespace Brawl
         public Vector2 HitVoicePitchRange = new Vector2(0.96f, 1.04f);
 
         [Header("KPI Computer Pickup")]
-        [Min(0.5f)] public float ComputerPickupRange = 2f;
-        [Range(10f, 180f)] public float ComputerPickupAngle = 100f;
+        [Min(0.5f)] public float ComputerPickupRange = 2.3f;
+        [Range(10f, 180f)] public float ComputerPickupAngle = 120f;
         [Min(0.1f)] public float ComputerPickupAnimationSeconds = 0.45f;
         public Vector3 ComputerHoldOffset = new Vector3(0f, 0.06f, 0.08f);
         public Vector3 ComputerHoldEuler = new Vector3(8f, 0f, 0f);
@@ -170,7 +170,7 @@ namespace Brawl
             mouseActions = GetComponent<FAnnequinMouseActions>();
             if (mouseActions == null) mouseActions = gameObject.AddComponent<FAnnequinMouseActions>();
             mouseActions.OnShortPressAttack = RequestPunch;
-            mouseActions.OnLongPressGrab = () => CmdCatch(GetLookDir());
+            mouseActions.OnLongPressGrab = RequestComputerPickup;
             mouseActions.OnRightClickRelease = CmdReleaseHeldObject;
             mouseActions.enabled = false;
 
@@ -474,6 +474,12 @@ namespace Brawl
                 BeginLocalAttackLocks(PunchAnimationLockSeconds, PunchMovementLockSeconds);
 
             CmdPunchOrThrow(0, GetLookDir());
+        }
+
+        void RequestComputerPickup()
+        {
+            if (!InputActive || IsHoldingComputer) return;
+            CmdCatch(GetLookDir());
         }
 
         bool IsAttackMovementLocked()
@@ -814,7 +820,7 @@ namespace Brawl
             if (attributes != null && damage > 0)
                 attributes.ServerTakeDamage(damage);
             if (heldComputer != null)
-                ServerReleaseComputer();
+                ServerReleaseComputer(true);
             if (heldPlayer != null)
                 ServerReleaseHeldPlayer(Vector3.zero, false);
 
@@ -938,7 +944,7 @@ namespace Brawl
             if (grabber != null)
                 grabber.ServerReleaseHeldPlayer(Vector3.zero, false);
             if (heldComputer != null)
-                ServerReleaseComputer();
+                ServerReleaseComputer(true);
             if (heldPlayer != null)
                 ServerReleaseHeldPlayer(Vector3.zero, false);
 
@@ -1388,7 +1394,7 @@ namespace Brawl
         {
             ServerForceStand();
             if (heldComputer != null)
-                ServerReleaseComputer();
+                ServerReleaseComputer(true);
             if (heldPlayer != null)
                 ServerReleaseHeldPlayer(Vector3.zero, false);
             if (grabber != null)
@@ -1407,7 +1413,7 @@ namespace Brawl
             if (attributes != null)
                 attributes.Died -= ServerOnDied;
             if (heldComputer != null)
-                ServerReleaseComputer();
+                ServerReleaseComputer(true);
             if (heldPlayer != null)
                 ServerReleaseHeldPlayer(Vector3.zero, false);
             if (grabber != null)
@@ -1474,7 +1480,11 @@ namespace Brawl
             {
                 if (objective == null || !objective.isActiveAndEnabled || objective.IsHeld) continue;
 
-                Vector3 toComputer = objective.transform.position - origin;
+                Collider pickupCollider = objective.GetComponentInChildren<Collider>();
+                Vector3 pickupPoint = pickupCollider != null
+                    ? pickupCollider.ClosestPoint(origin)
+                    : objective.transform.position;
+                Vector3 toComputer = pickupPoint - origin;
                 float distance = toComputer.magnitude;
                 if (distance > ComputerPickupRange) continue;
 
@@ -1633,7 +1643,7 @@ namespace Brawl
         }
 
         [Server]
-        void ServerReleaseComputer()
+        void ServerReleaseComputer(bool dropFromHands = false)
         {
             if (computerPickupRoutine != null)
             {
@@ -1652,9 +1662,9 @@ namespace Brawl
             Vector3 horizontalForward = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
             if (horizontalForward.sqrMagnitude < 0.001f) horizontalForward = Vector3.forward;
             horizontalForward.Normalize();
-            Vector3 releasePosition = transform.position
-                + horizontalForward * ComputerDropForward
-                + Vector3.up * 0.35f;
+            Vector3 releasePosition = dropFromHands
+                ? computer.transform.position
+                : transform.position + horizontalForward * ComputerDropForward + Vector3.up * 0.35f;
             Vector3 releaseVelocity = Vector3.zero;
             if (Mover != null && Mover.Rigb != null && !Mover.Rigb.isKinematic)
             {
@@ -1727,7 +1737,7 @@ namespace Brawl
         public void ServerBeginGrabbed(NetFAnnequinController who)
         {
             if (heldComputer != null)
-                ServerReleaseComputer();
+                ServerReleaseComputer(true);
 
             if (IsKnockedDown)
             {

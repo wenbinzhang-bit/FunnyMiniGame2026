@@ -1013,8 +1013,8 @@ MonoBehaviour:
   HitVoiceClip: {fileID: 8300000, guid: 0ad0ad27cf78f58428fb61fd64511316, type: 3}
   HitVoiceVolume: 0.9
   HitVoicePitchRange: {x: 0.96, y: 1.04}
-  ComputerPickupRange: 2
-  ComputerPickupAngle: 100
+  ComputerPickupRange: 2.3
+  ComputerPickupAngle: 120
   ComputerPickupAnimationSeconds: 0.45
   ComputerHoldOffset: {x: 0, y: 0.06, z: 0.08}
   ComputerHoldEuler: {x: 8, y: 0, z: 0}
