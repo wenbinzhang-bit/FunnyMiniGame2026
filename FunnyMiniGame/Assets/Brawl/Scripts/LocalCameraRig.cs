@@ -13,6 +13,19 @@ namespace Brawl
         public Vector3 FollowOffset = new Vector3(0f, 1.2f, 0f);
         public Vector2 DistanceRanges = new Vector2(2.5f, 8f);
 
+        [Header("Camera Rotation")]
+        [Min(0f)] public float HorizontalRotationSensitivity = 3f;
+        [Range(0f, 1f)] public float VerticalRotationSensitivityMultiplier = 0.4f;
+        public Vector2 VerticalRotationRanges = new Vector2(2f, 45f);
+        [Range(0.1f, 1f)] public float RotationSpeed = 0.65f;
+
+        [Header("Camera Height Protection")]
+        [Min(0f)] public float MinimumHeightAboveFollowPoint = 0.1f;
+
+        [Header("Vertical Follow")]
+        [Min(0f)] public float VerticalFollowSmoothTime = 0.18f;
+        [Min(0f)] public float VerticalFollowDeadZone = 0.15f;
+
         public override void OnStartLocalPlayer()
         {
             Camera cam = Camera.main;
@@ -30,6 +43,13 @@ namespace Brawl
             tpp.ToFollow = transform;
             tpp.FollowingOffset = FollowOffset;
             tpp.DistanceRanges = DistanceRanges;
+            tpp.RotationSensitivity = HorizontalRotationSensitivity;
+            tpp.VerticalRotationSensitivityMultiplier = VerticalRotationSensitivityMultiplier;
+            tpp.RotationRanges = VerticalRotationRanges;
+            tpp.RotationSpeed = RotationSpeed;
+            tpp.MinimumHeightAboveFollowPoint = MinimumHeightAboveFollowPoint;
+            tpp.VerticalFollowSmoothTime = VerticalFollowSmoothTime;
+            tpp.VerticalFollowDeadZone = VerticalFollowDeadZone;
             tpp.LockCursor = true;
             tpp.RightClickToLockCursor = GetComponent<NetFAnnequinController>() == null;
             tpp.enabled = true;

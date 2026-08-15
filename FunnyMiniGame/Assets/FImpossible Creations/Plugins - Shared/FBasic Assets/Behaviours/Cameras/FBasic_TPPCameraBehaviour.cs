@@ -35,6 +35,10 @@ namespace FIMSpace.Basics
         [Tooltip("Sensitivity value for rotating camera around following object")]
         public float RotationSensitivity = 10f;
 
+        [Tooltip("Vertical sensitivity as a multiplier of Rotation Sensitivity")]
+        [Range(0f, 1f)]
+        public float VerticalRotationSensitivityMultiplier = 1f;
+
         [Header("If you want camera rotation to be smooth")]
         [Range(0.1f, 1f)]
         // V1.1
@@ -44,6 +48,13 @@ namespace FIMSpace.Basics
         [Range(0f, 1f)]
         // V1.1
         public float HardFollowValue = 1f;
+
+        [Header("Optional vertical-only follow smoothing")]
+        [Min(0f)]
+        public float VerticalFollowSmoothTime = 0f;
+
+        [Min(0f)]
+        public float VerticalFollowDeadZone = 0f;
 
         [Header("If you want to hold cursor (cursor switch on TAB)")]
         public bool LockCursor = false;
@@ -66,9 +77,16 @@ namespace FIMSpace.Basics
         [Header("How far forward raycast should check collision for camera")]
         public float CollisionOffset = 1f;
 
+        [Tooltip("Minimum world-space height above the smoothed follow point")]
+        [Min(0f)]
+        public float MinimumHeightAboveFollowPoint = 0f;
+
         public EFUpdateClock UpdateClock = EFUpdateClock.Update;
 
         Vector3 movVelo = Vector3.zero;
+        private float verticalFollowPosition;
+        private float verticalFollowVelocity;
+        private bool verticalFollowInitialized;
 
         /// <summary>
         /// Setting some basic variables for initialization
@@ -80,6 +98,12 @@ namespace FIMSpace.Basics
 
             targetSphericRotation = new Vector2(0f, 23f);
             animatedSphericRotation = targetSphericRotation;
+
+            if (ToFollow != null)
+            {
+                verticalFollowPosition = ToFollow.position.y + FollowingOffset.y;
+                verticalFollowInitialized = true;
+            }
 
             //if ( LockCursor )
             //{
@@ -140,7 +164,7 @@ namespace FIMSpace.Basics
             if (Cursor.lockState == CursorLockMode.Locked)
             {
                 targetSphericRotation.x += Input.GetAxis("Mouse X") * RotationSensitivity;
-                targetSphericRotation.y -= Input.GetAxis("Mouse Y") * RotationSensitivity;
+                targetSphericRotation.y -= Input.GetAxis("Mouse Y") * RotationSensitivity * VerticalRotationSensitivityMultiplier;
             }
         }
 
@@ -172,7 +196,49 @@ namespace FIMSpace.Basics
                 targetPosition = Vector3.SmoothDamp(this.targetPosition, targetPosition, ref movVelo, Mathf.Lerp(.5f, 0f, HardFollowValue), Mathf.Infinity, Time.deltaTime);
             }
 
+            ApplyVerticalFollowSmoothing(ref targetPosition);
+
             this.targetPosition = targetPosition;
+        }
+
+        private void ApplyVerticalFollowSmoothing(ref Vector3 targetPosition)
+        {
+            if (VerticalFollowSmoothTime <= 0f)
+            {
+                verticalFollowPosition = targetPosition.y;
+                verticalFollowVelocity = 0f;
+                verticalFollowInitialized = true;
+                return;
+            }
+
+            if (!verticalFollowInitialized)
+            {
+                verticalFollowPosition = targetPosition.y;
+                verticalFollowInitialized = true;
+            }
+
+            float verticalDelta = targetPosition.y - verticalFollowPosition;
+            float desiredVerticalPosition = targetPosition.y;
+
+            if (Mathf.Abs(verticalDelta) <= VerticalFollowDeadZone)
+            {
+                verticalFollowVelocity = 0f;
+                targetPosition.y = verticalFollowPosition;
+                return;
+            }
+            else
+            {
+                desiredVerticalPosition -= Mathf.Sign(verticalDelta) * VerticalFollowDeadZone;
+            }
+
+            verticalFollowPosition = Mathf.SmoothDamp(
+                verticalFollowPosition,
+                desiredVerticalPosition,
+                ref verticalFollowVelocity,
+                VerticalFollowSmoothTime,
+                Mathf.Infinity,
+                Time.deltaTime);
+            targetPosition.y = verticalFollowPosition;
         }
 
         /// <summary>
@@ -193,6 +259,13 @@ namespace FIMSpace.Basics
             {
                 Vector3 rotationOffset = transform.rotation * -Vector3.forward * animatedDistance;
                 transform.position = targetPosition + rotationOffset + transform.TransformVector(FollowingOffsetDirection);
+            }
+
+            if (MinimumHeightAboveFollowPoint > 0f)
+            {
+                Vector3 protectedPosition = transform.position;
+                protectedPosition.y = Mathf.Max(protectedPosition.y, targetPosition.y + MinimumHeightAboveFollowPoint);
+                transform.position = protectedPosition;
             }
         }
 

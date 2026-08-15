@@ -17,6 +17,11 @@ namespace Brawl
         public Demo_Ragd_Hero1 Hero;
         public Animator Mecanim;
 
+        [Header("Attack Timing")]
+        [Min(0.1f)] public float PunchAnimationLockSeconds = 1.25f;
+        [Min(0.1f)] public float PunchMovementLockSeconds = 1.23f;
+        [Min(0.1f)] public float UppercutAnimationLockSeconds = 0.8f;
+
         [SyncVar] int score;
         public int Score { get => score; set => score = value; }
 
@@ -57,6 +62,10 @@ namespace Brawl
         float knockbackUntil;
         RigidbodyConstraints standingConstraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
         float lastPlayerPunchTime = -1f;
+        float attackLockedUntil = -1f;
+        float attackMovementLockedUntil = -1f;
+        float localAttackInputLockedUntil = -1f;
+        float localAttackMovementLockedUntil = -1f;
         float lastReceivedHitTime = -1f;
         NetFAnnequinController heldPlayer;
         NetFAnnequinController grabber;
@@ -86,7 +95,7 @@ namespace Brawl
 
             mouseActions = GetComponent<FAnnequinMouseActions>();
             if (mouseActions == null) mouseActions = gameObject.AddComponent<FAnnequinMouseActions>();
-            mouseActions.OnShortPressAttack = () => CmdPunchOrThrow(0, GetLookDir());
+            mouseActions.OnShortPressAttack = RequestPunch;
             mouseActions.OnLongPressGrab = () => CmdCatch(GetLookDir());
             mouseActions.OnRightClickRelease = () => CmdThrow(GetLookDir());
             mouseActions.enabled = false;
@@ -253,9 +262,11 @@ namespace Brawl
 
         void Update()
         {
+            bool attackMovementLocked = IsAttackMovementLocked();
+
             if ((isServer || isLocalPlayer) && Mover && Mover.enabled)
             {
-                Vector3 dir = InputActive ? pendingMove : Vector3.zero;
+                Vector3 dir = InputActive && !attackMovementLocked ? pendingMove : Vector3.zero;
                 Mover.moveDirectionWorld = dir;
                 if (dir.sqrMagnitude > 0.0001f)
                     Mover.SetTargetRotation(dir);
@@ -277,7 +288,7 @@ namespace Brawl
             if (inputValue.sqrMagnitude > 1f) inputValue.Normalize();
 
             Vector3 worldDir = Vector3.zero;
-            if (inputValue != Vector2.zero)
+            if (!attackMovementLocked && inputValue != Vector2.zero)
             {
                 float camYaw = Camera.main ? Camera.main.transform.eulerAngles.y : 0f;
                 worldDir = Quaternion.Euler(0f, camYaw, 0f) * new Vector3(inputValue.x, 0f, inputValue.y);
@@ -299,9 +310,9 @@ namespace Brawl
                 lastSendTime = Time.time;
             }
 
-            if (Input.GetKeyDown(KeyCode.Space)) CmdJump();
+            if (!attackMovementLocked && Input.GetKeyDown(KeyCode.Space)) CmdJump();
             if (Input.GetKeyDown(KeyCode.Z) || Input.GetKeyDown(KeyCode.F))
-                CmdPunchOrThrow(0, GetLookDir());
+                RequestPunch();
         }
 
         [Command]
@@ -309,7 +320,7 @@ namespace Brawl
         {
             try
             {
-            if (!InputActive)
+            if (!InputActive || Time.time < attackMovementLockedUntil)
             {
                 pendingMove = Vector3.zero;
                 return;
@@ -339,7 +350,7 @@ namespace Brawl
         {
             try
             {
-                if (!InputActive || Hero == null) return;
+                if (!InputActive || Hero == null || Time.time < attackMovementLockedUntil) return;
                 Hero.DoJump();
             }
             catch (System.Exception e)
@@ -353,6 +364,53 @@ namespace Brawl
             return Camera.main ? Camera.main.transform.forward : transform.forward;
         }
 
+        void RequestPunch()
+        {
+            if (Time.time < localAttackInputLockedUntil) return;
+
+            bool willThrow = Hero != null && (Hero.IsHoldingUp || Hero.IsThrowing);
+            if (!willThrow)
+                BeginLocalAttackLocks(PunchAnimationLockSeconds, PunchMovementLockSeconds);
+
+            CmdPunchOrThrow(0, GetLookDir());
+        }
+
+        bool IsAttackMovementLocked()
+        {
+            return (isServer && Time.time < attackMovementLockedUntil)
+                || (isLocalPlayer && Time.time < localAttackMovementLockedUntil);
+        }
+
+        void BeginLocalAttackLocks(float attackDuration, float movementDuration)
+        {
+            localAttackInputLockedUntil = Mathf.Max(localAttackInputLockedUntil, Time.time + attackDuration);
+            localAttackMovementLockedUntil = Mathf.Max(localAttackMovementLockedUntil, Time.time + movementDuration);
+            StopMovementForAttack();
+        }
+
+        void StopMovementForAttack()
+        {
+            pendingMove = Vector3.zero;
+
+            if (Mover != null)
+            {
+                Mover.moveDirectionWorld = Vector3.zero;
+                Mover.ResetTargetRotation();
+
+                if (Mover.Rigb != null && !Mover.Rigb.isKinematic)
+                {
+                    Vector3 velocity = Mover.Rigb.velocity;
+                    Mover.Rigb.velocity = new Vector3(0f, velocity.y, 0f);
+                }
+            }
+
+            if (Mecanim != null)
+            {
+                Mecanim.SetBool("Moving", false);
+                Mecanim.SetFloat("Speed", 0f);
+            }
+        }
+
         [Command]
         void CmdPunchOrThrow(byte kind, Vector3 lookDir)
         {
@@ -364,6 +422,13 @@ namespace Brawl
                     ServerStartThrow(lookDir);
                     return;
                 }
+
+                if (Time.time < attackLockedUntil) return;
+                float attackLockSeconds = kind == 0 ? PunchAnimationLockSeconds : UppercutAnimationLockSeconds;
+                float movementLockSeconds = kind == 0 ? PunchMovementLockSeconds : UppercutAnimationLockSeconds;
+                attackLockedUntil = Time.time + attackLockSeconds;
+                attackMovementLockedUntil = Time.time + movementLockSeconds;
+                StopMovementForAttack();
 
                 ServerFaceYaw(lookDir);
                 if (kind == 0) Hero.DoPunchF();
@@ -858,6 +923,13 @@ namespace Brawl
         {
             if (isServer) return;
             if (Mecanim == null) return;
+
+            if (isLocalPlayer)
+            {
+                if (state == "Punch F") BeginLocalAttackLocks(PunchAnimationLockSeconds, PunchMovementLockSeconds);
+                else if (state == "Punch U") BeginLocalAttackLocks(UppercutAnimationLockSeconds, UppercutAnimationLockSeconds);
+            }
+
             if (Mecanim.layerCount > 1)
             {
                 if (layer == 1) Mecanim.SetLayerWeight(1, 1f);
