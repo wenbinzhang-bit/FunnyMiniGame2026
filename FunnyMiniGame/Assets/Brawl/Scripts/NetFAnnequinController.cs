@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using FIMSpace.FProceduralAnimation;
 using FIMSpace.RagdollAnimatorDemo;
 using Mirror;
 using UnityEngine;
@@ -16,6 +17,7 @@ namespace Brawl
         public FBasic_RigidbodyMover Mover;
         public Demo_Ragd_Hero1 Hero;
         public Animator Mecanim;
+        public RagdollAnimator2 Ragdoll;
 
         [Header("Attack Timing")]
         [Min(0.1f)] public float PunchAnimationLockSeconds = 1.25f;
@@ -36,15 +38,17 @@ namespace Brawl
         [Min(0.1f)] public float KnockdownGroundSeconds = 1.55f;
         [Min(0.1f)] public float GetUpFaceSeconds = 1.35f;
         [Min(0.1f)] public float GetUpBackSeconds = 1.65f;
-        [Min(0f)] public float KnockdownSlideSpeed = 4.8f;
-        [Min(0f)] public float KnockdownLiftSpeed = 2.4f;
-        [Min(0.05f)] public float KnockbackControlSeconds = 0.65f;
-        [Min(0f)] public float KnockbackDeceleration = 8f;
-        [Min(0f)] public float KnockbackSpinSpeed = 0.75f;
-        [Min(0f)] public float KnockbackSpinDeceleration = 1.2f;
+        [Min(0f)] public float KnockdownSlideSpeed = 5.3f;
+        [Min(0f)] public float KnockdownLiftSpeed = 3f;
+        [Min(0.05f)] public float KnockbackControlSeconds = 1f;
+        [Min(0f)] public float KnockbackDeceleration = 5.3f;
+        [Min(0f)] public float KnockbackSpinSpeed = 1.25f;
+        [Min(0f)] public float KnockbackSpinDeceleration = 1.5f;
+        [Range(0.1f, 1f)] public float RagdollHorizontalForceScale = 0.31f;
         [Range(45f, 90f)] public float VisualFallAngle = 82f;
+        [Range(0f, 360f)] public float VisualTumbleDegrees = 180f;
         [Min(0f)] public float VisualFallDelay = 0.1f;
-        [Min(0.05f)] public float VisualFallSeconds = 0.34f;
+        [Min(0.05f)] public float VisualFallSeconds = 0.5f;
         [Min(0f)] public float VisualFallLift = 0.02f;
         [Min(0.05f)] public float GetUpAlignmentBlendSeconds = 0.5f;
 
@@ -64,6 +68,7 @@ namespace Brawl
         public bool IsDead => attributes != null && attributes.IsDead;
         public bool WantsToMove => pendingMove.sqrMagnitude > 0.0001f;
         public bool IsMoveAuthority => Mover != null && Mover.Rigb != null && !Mover.Rigb.isKinematic && (isServer || isLocalPlayer);
+        bool UsesServerPoseSync => poseSync != null && poseSync.enabled;
         public bool IsInKnockback => isServer && Time.time < knockbackUntil;
         public bool IsHoldingPlayer => heldPlayer != null;
         public bool IsGrabbed => grabber != null;
@@ -81,8 +86,10 @@ namespace Brawl
         PlayerAttributes attributes;
         AudioSource hitVoiceSource;
         FAnnequinMeleeVictim meleeVictim;
+        CapsuleCollider gameplayCapsule;
         NetworkTransformReliable netTransform;
         BrawlMoveSync moveSync;
+        RagdollNetworkSync poseSync;
         double lastMovePoseSend;
         Coroutine throwFallback;
         Coroutine punchFallback;
@@ -102,6 +109,8 @@ namespace Brawl
         Collider grabIgnoreB;
         float holdBodyOffset = 1.35f;
         bool preferFaceGetUp;
+        bool visualFallForward;
+        bool physicalRagdollActive;
         Transform visualRoot;
         Vector3 visualStandingLocalPosition;
         Quaternion visualStandingLocalRotation;
@@ -118,7 +127,11 @@ namespace Brawl
             if (Mover == null) Mover = GetComponent<FBasic_RigidbodyMover>();
             if (Hero == null) Hero = GetComponent<Demo_Ragd_Hero1>();
             if (Mecanim == null) Mecanim = GetComponent<Animator>();
+            if (Ragdoll == null) Ragdoll = Hero != null && Hero.Ragdoll != null
+                ? Hero.Ragdoll
+                : GetComponent<RagdollAnimator2>();
             if (HitVoiceClip == null) HitVoiceClip = Resources.Load<AudioClip>("Audio/HitVoice_Ah");
+            gameplayCapsule = GetComponent<CapsuleCollider>();
             hitVoiceSource = Hero != null && Hero.HitAudio != null ? Hero.HitAudio : GetComponent<AudioSource>();
             if (hitVoiceSource == null)
             {
@@ -158,6 +171,7 @@ namespace Brawl
             if (meleeVictim == null) meleeVictim = gameObject.AddComponent<FAnnequinMeleeVictim>();
             meleeVictim.OnHitByMelee = ServerReceiveMeleeHit;
             netTransform = GetComponent<NetworkTransformReliable>();
+            poseSync = GetComponent<RagdollNetworkSync>();
             moveSync = GetComponent<BrawlMoveSync>();
             if (moveSync == null)
                 moveSync = gameObject.AddComponent<BrawlMoveSync>();
@@ -169,7 +183,7 @@ namespace Brawl
             if (Mover != null && Mover.Rigb != null)
                 standingConstraints = Mover.Rigb.constraints;
 
-            var capsule = GetComponent<CapsuleCollider>();
+            var capsule = gameplayCapsule != null ? gameplayCapsule : GetComponent<CapsuleCollider>();
             if (capsule != null)
             {
                 capsule.enabled = true;
@@ -221,9 +235,10 @@ namespace Brawl
             if (netAnim != null)
                 netAnim.enabled = false;
 
-            var poseSync = GetComponent<RagdollNetworkSync>();
+            if (poseSync == null)
+                poseSync = GetComponent<RagdollNetworkSync>();
             if (poseSync != null)
-                poseSync.enabled = false;
+                poseSync.enabled = true;
 
             if (netTransform == null)
                 netTransform = GetComponent<NetworkTransformReliable>();
@@ -262,7 +277,7 @@ namespace Brawl
             if (mouseActions) mouseActions.enabled = !IsDead;
             if (attributes != null)
                 attributes.HealthChanged += OnLocalHealthChanged;
-            if (!isServer && Mover != null)
+            if (!isServer && !UsesServerPoseSync && Mover != null)
             {
                 Mover.enabled = true;
                 if (Mover.Rigb != null)
@@ -313,7 +328,7 @@ namespace Brawl
         {
             bool attackMovementLocked = IsAttackMovementLocked();
 
-            if ((isServer || isLocalPlayer) && Mover && Mover.enabled)
+            if ((isServer || (isLocalPlayer && !UsesServerPoseSync)) && Mover && Mover.enabled)
             {
                 Vector3 dir = InputActive && !attackMovementLocked ? pendingMove : Vector3.zero;
                 Mover.moveDirectionWorld = dir;
@@ -321,7 +336,7 @@ namespace Brawl
                     Mover.SetTargetRotation(dir);
             }
 
-            if (isLocalPlayer && !isServer)
+            if (isLocalPlayer && !isServer && !UsesServerPoseSync)
                 ClientReconcile();
 
             if (isServer)
@@ -788,6 +803,10 @@ namespace Brawl
             Vector3 impact = impulse.sqrMagnitude > 0.01f ? impulse : -transform.forward;
             Vector3 horizontal = Vector3.ProjectOnPlane(impact, Vector3.up);
             if (horizontal.sqrMagnitude < 0.01f) horizontal = -transform.forward;
+            // 只收短水平飞行距离，保留向上的冲量和 Bot 同款的四肢翻滚感。
+            Vector3 impactDirection = horizontal.normalized * RagdollHorizontalForceScale
+                + Vector3.up * 0.33f;
+            physicalRagdollActive = TryStartPhysicalRagdoll(impactDirection);
             Vector3 vel = horizontal.normalized * KnockdownSlideSpeed + Vector3.up * KnockdownLiftSpeed;
             float lateralImpact = Vector3.Dot(horizontal.normalized, transform.right);
             float spinDirection = Mathf.Abs(lateralImpact) > 0.15f
@@ -797,10 +816,13 @@ namespace Brawl
 
             Vector3 standingForward = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
             Vector3 knockdownDirection = Vector3.ProjectOnPlane(vel, Vector3.up);
-            preferFaceGetUp = standingForward.sqrMagnitude > 0.01f && knockdownDirection.sqrMagnitude > 0.01f
+            visualFallForward = standingForward.sqrMagnitude > 0.01f && knockdownDirection.sqrMagnitude > 0.01f
                 && Vector3.Dot(standingForward.normalized, knockdownDirection.normalized) > 0f;
+            float tumbleRemainder = Mathf.Repeat(Mathf.Abs(VisualTumbleDegrees), 360f);
+            bool tumbleFlipsLandingSide = tumbleRemainder >= 90f && tumbleRemainder < 270f;
+            preferFaceGetUp = tumbleFlipsLandingSide ? !visualFallForward : visualFallForward;
 
-            if (Mover != null && Mover.Rigb != null)
+            if (!physicalRagdollActive && Mover != null && Mover.Rigb != null)
             {
                 Mover.enabled = false;
                 if (Mover.Rigb.isKinematic) Mover.Rigb.isKinematic = false;
@@ -810,19 +832,20 @@ namespace Brawl
                 Mover.Rigb.velocity = vel;
             }
 
-            KnockbackVelocity = new Vector3(vel.x, 0f, vel.z);
-            knockbackUntil = Time.time + KnockbackControlSeconds;
+            KnockbackVelocity = physicalRagdollActive ? Vector3.zero : new Vector3(vel.x, 0f, vel.z);
+            knockbackUntil = physicalRagdollActive ? 0f : Time.time + KnockbackControlSeconds;
             ServerIgnoreNearbyPlayerCollision(true);
 
-            if (Mecanim)
+            if (!physicalRagdollActive && Mecanim)
             {
                 Mecanim.SetBool("Ragdolled", false);
                 Mecanim.SetBool("Grounded", false);
                 Mecanim.SetBool("Moving", false);
                 Mecanim.CrossFadeInFixedTime("Fall", 0.08f, 0);
             }
-            BeginVisualFall(preferFaceGetUp);
-            RpcKnockDown(true, "Fall", preferFaceGetUp);
+            if (!physicalRagdollActive)
+                BeginVisualFall(visualFallForward);
+            RpcKnockDown(true, "Fall", visualFallForward, physicalRagdollActive);
 
             if (IsDead)
             {
@@ -832,6 +855,53 @@ namespace Brawl
 
             if (knockdownRoutine != null) StopCoroutine(knockdownRoutine);
             knockdownRoutine = StartCoroutine(KnockdownRoutine());
+        }
+
+        /// <summary>
+        /// 使用 Punch Demo Bot 的 RA2 击飞方式：全身冲量负责惯性，核心骨冲量负责命中张力。
+        /// 落点跟随和起身由 Bot 同款 RA2 Features 接管。
+        /// </summary>
+        [Server]
+        bool TryStartPhysicalRagdoll(Vector3 impactDirection)
+        {
+            if (Ragdoll == null || !Ragdoll.enabled || !Ragdoll.Handler.WasInitialized)
+                return false;
+
+            Rigidbody core = Ragdoll.User_GetNearestRagdollRigidbodyToPosition(
+                transform.TransformPoint(new Vector3(0f, 1.45f, 0.2f)),
+                true,
+                ERagdollChainType.Core);
+            if (core == null) return false;
+
+            if (visualFallRoutine != null)
+            {
+                StopCoroutine(visualFallRoutine);
+                visualFallRoutine = null;
+            }
+            ResetVisualToStanding();
+
+            if (Mover != null)
+            {
+                Mover.enabled = false;
+                if (Mover.Rigb != null)
+                {
+                    Mover.Rigb.velocity = Vector3.zero;
+                    Mover.Rigb.angularVelocity = Vector3.zero;
+                    Mover.Rigb.constraints = standingConstraints;
+                }
+            }
+            // Punch Demo Bot 在 Falling 期间会关闭角色控制胶囊，避免它与自己的
+            // 物理假体互相顶开并造成起身前后的长距离滑步。
+            if (gameplayCapsule != null)
+                gameplayCapsule.enabled = false;
+
+            float punchPower = Hero != null ? Hero.PunchPower : 20f;
+            Ragdoll.User_SwitchFallState(RagdollHandler.EAnimatingMode.Falling);
+            Ragdoll.User_AddAllBonesImpact(
+                impactDirection * (punchPower * 0.5f), 0.05f, ForceMode.Impulse);
+            Ragdoll.User_AddRigidbodyImpact(
+                core, impactDirection * (punchPower * 1.5f), 0f, ForceMode.Impulse);
+            return true;
         }
 
         [Server]
@@ -863,15 +933,21 @@ namespace Brawl
                 mouseActions.enabled = false;
             }
 
-            if (Mecanim)
+            if (physicalRagdollActive && Ragdoll != null && Ragdoll.Handler.WasInitialized)
+            {
+                // Sleep 保留死亡布娃娃，同时阻止 Auto Get Up。
+                Ragdoll.User_SwitchFallState(RagdollHandler.EAnimatingMode.Sleep);
+            }
+            else if (Mecanim)
             {
                 Mecanim.SetBool("Ragdolled", false);
                 Mecanim.SetBool("Grounded", false);
                 Mecanim.SetBool("Moving", false);
                 Mecanim.CrossFadeInFixedTime("Fall", 0.08f, 0);
             }
-            BeginVisualFall(preferFaceGetUp);
-            RpcKnockDown(true, "Fall", preferFaceGetUp);
+            if (!physicalRagdollActive)
+                BeginVisualFall(visualFallForward);
+            RpcKnockDown(true, "Fall", visualFallForward, physicalRagdollActive);
         }
 
         [Server]
@@ -890,6 +966,35 @@ namespace Brawl
 
         IEnumerator KnockdownRoutine()
         {
+            if (physicalRagdollActive)
+            {
+                // Auto Get Up 会等身体速度足够低且触地稳定后切换 Standing；
+                // 这里只锁住玩法输入，避免固定计时强行对齐造成瞬移。
+                float timeout = 6f;
+                while (timeout > 0f && IsKnockedDown && !IsGrabbed && !IsDead
+                    && Ragdoll != null
+                    && Ragdoll.Handler.AnimatingMode != RagdollHandler.EAnimatingMode.Standing)
+                {
+                    timeout -= Time.deltaTime;
+                    yield return null;
+                }
+
+                if (!IsKnockedDown || IsGrabbed || IsDead) yield break;
+                if (Ragdoll != null
+                    && Ragdoll.Handler.AnimatingMode != RagdollHandler.EAnimatingMode.Standing)
+                {
+                    // 极端卡角落的兜底仍走 RA2 混合，不直接改骨骼或根节点。
+                    Ragdoll.User_TransitionToStandingMode(1f, 0f);
+                }
+
+                StabilizePhysicalGetUp();
+
+                yield return new WaitForSeconds(Mathf.Max(GetUpFaceSeconds, GetUpBackSeconds));
+                if (!IsKnockedDown || IsGrabbed || IsDead) yield break;
+                ServerForceStand();
+                yield break;
+            }
+
             yield return new WaitForSeconds(KnockdownGroundSeconds);
             if (!IsKnockedDown || IsGrabbed || IsDead) yield break;
 
@@ -918,7 +1023,7 @@ namespace Brawl
                 Mecanim.SetBool("Grounded", true);
                 PlayMatchedGetUp(getUp);
             }
-            RpcKnockDown(false, getUp, getUpFromFace);
+            RpcKnockDown(false, getUp, getUpFromFace, false);
 
             yield return new WaitForSeconds(getUpFromFace ? GetUpFaceSeconds : GetUpBackSeconds);
             if (!IsKnockedDown || IsGrabbed || IsDead) yield break;
@@ -936,6 +1041,15 @@ namespace Brawl
             }
 
             bool wasDown = IsKnockedDown;
+            bool wasPhysicalRagdoll = physicalRagdollActive;
+            if (wasPhysicalRagdoll && Ragdoll != null && Ragdoll.Handler.WasInitialized
+                && Ragdoll.Handler.AnimatingMode != RagdollHandler.EAnimatingMode.Standing)
+            {
+                Ragdoll.User_TransitionToStandingMode(0.35f, 0f);
+            }
+            physicalRagdollActive = false;
+            if (gameplayCapsule != null)
+                gameplayCapsule.enabled = true;
             IsKnockedDown = false;
             if (knockdownRoutine != null)
             {
@@ -970,9 +1084,23 @@ namespace Brawl
             }
             if (wasDown)
             {
-                ResetVisualToStanding();
-                RpcKnockDown(false, string.Empty, false);
+                if (!wasPhysicalRagdoll)
+                    ResetVisualToStanding();
+                RpcKnockDown(false, string.Empty, false, wasPhysicalRagdoll);
             }
+        }
+
+        [Server]
+        void StabilizePhysicalGetUp()
+        {
+            if (Mover != null && Mover.Rigb != null)
+            {
+                Mover.Rigb.velocity = Vector3.zero;
+                Mover.Rigb.angularVelocity = Vector3.zero;
+                Mover.Rigb.constraints = standingConstraints;
+            }
+            if (gameplayCapsule != null)
+                gameplayCapsule.enabled = true;
         }
 
         [ClientRpc]
@@ -1000,7 +1128,7 @@ namespace Brawl
         }
 
         [ClientRpc]
-        void RpcKnockDown(bool down, string clip, bool faceDown)
+        void RpcKnockDown(bool down, string clip, bool faceDown, bool physicalRagdoll)
         {
             if (isServer) return;
 
@@ -1008,10 +1136,16 @@ namespace Brawl
             bool controlsLocked = down || !string.IsNullOrEmpty(clip);
             ApplyClientKnockdownLock(controlsLocked);
 
-            if (down) BeginVisualFall(faceDown);
-            else if (string.IsNullOrEmpty(clip)) ResetVisualToStanding();
+            if (physicalRagdoll && gameplayCapsule != null)
+                gameplayCapsule.enabled = !down;
 
-            if (Mecanim != null)
+            if (!physicalRagdoll)
+            {
+                if (down) BeginVisualFall(faceDown);
+                else if (string.IsNullOrEmpty(clip)) ResetVisualToStanding();
+            }
+
+            if (!physicalRagdoll && !UsesServerPoseSync && Mecanim != null)
             {
                 Mecanim.SetBool("Ragdolled", false);
                 Mecanim.SetBool("Grounded", !down);
@@ -1038,12 +1172,15 @@ namespace Brawl
             Vector3 targetPosition = visualStandingLocalPosition + Vector3.up * VisualFallLift;
             float fallDirection = faceDown ? 1f : -1f;
             float sideDirection = (netId & 1u) == 0u ? 1f : -1f;
+            float recoilAngle = -fallDirection * 10f;
+            float impactAngle = fallDirection * (VisualFallAngle + VisualTumbleDegrees + 6f);
+            float targetAngle = fallDirection * (VisualFallAngle + VisualTumbleDegrees);
             Quaternion recoilRotation = visualStandingLocalRotation
-                * Quaternion.Euler(-fallDirection * 10f, 0f, sideDirection * 5f);
+                * Quaternion.Euler(recoilAngle, 0f, sideDirection * 5f);
             Quaternion impactRotation = visualStandingLocalRotation
-                * Quaternion.Euler(fallDirection * (VisualFallAngle + 6f), 0f, sideDirection * 7f);
+                * Quaternion.Euler(impactAngle, 0f, sideDirection * 7f);
             Quaternion targetRotation = visualStandingLocalRotation
-                * Quaternion.Euler(fallDirection * VisualFallAngle, 0f, sideDirection * 2f);
+                * Quaternion.Euler(targetAngle, 0f, sideDirection * 2f);
             Vector3 recoilPosition = Vector3.Lerp(startPosition, targetPosition, 0.35f) + Vector3.up * 0.055f;
             Vector3 impactPosition = targetPosition - Vector3.up * 0.012f;
             float elapsed = 0f;
@@ -1068,7 +1205,10 @@ namespace Brawl
                 float t = Mathf.Clamp01(elapsed / VisualFallSeconds);
                 float acceleratedFall = t * t;
                 visualRoot.localPosition = Vector3.Lerp(recoilPosition, impactPosition, acceleratedFall);
-                visualRoot.localRotation = Quaternion.Slerp(recoilRotation, impactRotation, acceleratedFall);
+                // 直接按连续角度采样，避免 Quaternion.Slerp 把半圈翻滚自动改走最短路径。
+                float tumbleAngle = Mathf.Lerp(recoilAngle, impactAngle, acceleratedFall);
+                float sideAngle = Mathf.Lerp(sideDirection * 5f, sideDirection * 7f, acceleratedFall);
+                visualRoot.localRotation = visualStandingLocalRotation * Quaternion.Euler(tumbleAngle, 0f, sideAngle);
                 yield return null;
             }
 
@@ -1174,6 +1314,22 @@ namespace Brawl
             pendingMove = Vector3.zero;
 
             if (Mover == null) return;
+            if (!isServer && UsesServerPoseSync)
+            {
+                // 纯客户端始终回放服务器骨骼姿态，不能在解锁时重新开启本地物理抢写。
+                Mover.enabled = false;
+                if (Mover.Rigb != null)
+                {
+                    if (!Mover.Rigb.isKinematic)
+                    {
+                        Mover.Rigb.velocity = Vector3.zero;
+                        Mover.Rigb.angularVelocity = Vector3.zero;
+                    }
+                    Mover.Rigb.isKinematic = true;
+                    Mover.Rigb.interpolation = RigidbodyInterpolation.None;
+                }
+                return;
+            }
             Mover.enabled = !locked && !IsDead;
             if (Mover.Rigb == null) return;
 
@@ -1232,6 +1388,7 @@ namespace Brawl
 
         void ClientReconcile()
         {
+            if (UsesServerPoseSync) return;
             if (IsKnockedDown || IsGrabbed) return;
             if (moveSync == null || !moveSync.HasServerPose || Mover == null || Mover.Rigb == null) return;
 
@@ -1249,7 +1406,7 @@ namespace Brawl
             {
                 if (heldPlayer != null)
                     ServerHoldPlayerAtHand();
-                if (NetworkTime.localTime - lastMovePoseSend >= 0.05)
+                if (!UsesServerPoseSync && NetworkTime.localTime - lastMovePoseSend >= 0.05)
                 {
                     lastMovePoseSend = NetworkTime.localTime;
                     RpcMovePose(NetworkTime.localTime, transform.position, transform.rotation);
@@ -1257,7 +1414,7 @@ namespace Brawl
                 return;
             }
 
-            if ((!isLocalPlayer || IsKnockedDown || IsGrabbed) && moveSync != null)
+            if (!UsesServerPoseSync && (!isLocalPlayer || IsKnockedDown || IsGrabbed) && moveSync != null)
                 moveSync.ApplyRemoteInterpolation();
         }
 

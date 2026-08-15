@@ -22,7 +22,9 @@ namespace Brawl
         public float BufferTimeMultiplier = 2f;
 
         Transform[] bones;
+        int hipsIndex = -1;
         double lastSendTime;
+        bool loggedPacketSize;
 
         /// <summary>诊断:服务端已发送/客户端已应用的快照计数(冒烟测试用)。</summary>
         public static long PoseSendCount;
@@ -35,7 +37,7 @@ namespace Brawl
             public double time;
             public Vector3 rootPos;
             public Quaternion rootRot;
-            public Vector3[] bonePos;
+            public Vector3 hipsLocalPos;
             public Quaternion[] boneRot;
         }
 
@@ -48,13 +50,34 @@ namespace Brawl
 
         void Awake()
         {
-            // 在 RA2 初始化之前采集骨骼层级,保证两端顺序一致
-            var all = GetComponentsInChildren<Transform>(true);
-            var list = new List<Transform>(all.Length);
-            foreach (var t in all)
-                if (t != transform)
-                    list.Add(t);
-            bones = list.ToArray();
+            // 只采集当前换皮模型的可见骨架。旧人偶、相机锚点、抓取辅助节点无需逐帧同步；
+            // 之前把根节点下所有 Transform 都打包，RPC 达到 1414B，超过 KCP 1184B 上限被整包丢弃。
+            NetFAnnequinController owner = GetComponent<NetFAnnequinController>();
+            Animator visibleAnimator = owner != null ? owner.Mecanim : null;
+            if (visibleAnimator == null || visibleAnimator.transform == transform)
+            {
+                foreach (Animator candidate in GetComponentsInChildren<Animator>(true))
+                {
+                    if (candidate.transform == transform || !candidate.isHuman) continue;
+                    visibleAnimator = candidate;
+                    break;
+                }
+            }
+
+            Transform rigRoot = visibleAnimator != null ? visibleAnimator.transform : transform;
+            bones = rigRoot.GetComponentsInChildren<Transform>(true);
+            if (visibleAnimator != null && visibleAnimator.isHuman)
+            {
+                Transform hips = visibleAnimator.GetBoneTransform(HumanBodyBones.Hips);
+                for (int i = 0; i < bones.Length; i++)
+                {
+                    if (bones[i] != hips) continue;
+                    hipsIndex = i;
+                    break;
+                }
+            }
+
+            Debug.Log($"BRAWL_POSE_SYNC: {name} visibleBones={bones.Length} hipsIndex={hipsIndex}");
         }
 
         public override void OnStartClient()
@@ -103,16 +126,23 @@ namespace Brawl
                 writer.WriteVector3(transform.position);
                 writer.WriteUInt(Compression.CompressQuaternion(transform.rotation));
 
+                Vector3 hipsPosition = hipsIndex >= 0 ? bones[hipsIndex].localPosition : Vector3.zero;
+                writer.WriteUShort(Mathf.FloatToHalf(hipsPosition.x));
+                writer.WriteUShort(Mathf.FloatToHalf(hipsPosition.y));
+                writer.WriteUShort(Mathf.FloatToHalf(hipsPosition.z));
+
                 for (int i = 0; i < bones.Length; i++)
                 {
-                    Vector3 lp = bones[i].localPosition;
-                    writer.WriteUShort(Mathf.FloatToHalf(lp.x));
-                    writer.WriteUShort(Mathf.FloatToHalf(lp.y));
-                    writer.WriteUShort(Mathf.FloatToHalf(lp.z));
                     writer.WriteUInt(Compression.CompressQuaternion(bones[i].localRotation));
                 }
 
-                RpcPose(NetworkTime.localTime, writer.ToArray());
+                byte[] payload = writer.ToArray();
+                if (!loggedPacketSize)
+                {
+                    loggedPacketSize = true;
+                    Debug.Log($"BRAWL_POSE_PACKET: {name} bytes={payload.Length} bones={bones.Length}");
+                }
+                RpcPose(NetworkTime.localTime, payload);
                 PoseSendCount++;
             }
         }
@@ -129,16 +159,15 @@ namespace Brawl
                     time = serverTime,
                     rootPos = reader.ReadVector3(),
                     rootRot = Compression.DecompressQuaternion(reader.ReadUInt()),
-                    bonePos = new Vector3[bones.Length],
+                    hipsLocalPos = new Vector3(
+                        Mathf.HalfToFloat(reader.ReadUShort()),
+                        Mathf.HalfToFloat(reader.ReadUShort()),
+                        Mathf.HalfToFloat(reader.ReadUShort())),
                     boneRot = new Quaternion[bones.Length]
                 };
 
                 for (int i = 0; i < bones.Length; i++)
                 {
-                    snap.bonePos[i] = new Vector3(
-                        Mathf.HalfToFloat(reader.ReadUShort()),
-                        Mathf.HalfToFloat(reader.ReadUShort()),
-                        Mathf.HalfToFloat(reader.ReadUShort()));
                     snap.boneRot[i] = Compression.DecompressQuaternion(reader.ReadUInt());
                 }
 
@@ -186,11 +215,16 @@ namespace Brawl
                 Vector3.Lerp(from.rootPos, to.rootPos, t),
                 Quaternion.Slerp(from.rootRot, to.rootRot, t));
 
-            int count = Mathf.Min(bones.Length, from.bonePos.Length);
+            if (hipsIndex >= 0 && hipsIndex < bones.Length && bones[hipsIndex] != null)
+            {
+                bones[hipsIndex].localPosition = Vector3.Lerp(
+                    from.hipsLocalPos, to.hipsLocalPos, t);
+            }
+
+            int count = Mathf.Min(bones.Length, from.boneRot.Length);
             for (int i = 0; i < count; i++)
             {
                 if (bones[i] == null) continue;
-                bones[i].localPosition = Vector3.Lerp(from.bonePos[i], to.bonePos[i], t);
                 bones[i].localRotation = Quaternion.Slerp(from.boneRot[i], to.boneRot[i], t);
             }
 

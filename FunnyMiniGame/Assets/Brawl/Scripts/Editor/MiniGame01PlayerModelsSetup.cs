@@ -1,6 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using FIMSpace.FProceduralAnimation;
 using FIMSpace.RagdollAnimatorDemo;
 using Mirror;
 using UnityEditor;
@@ -14,8 +16,9 @@ namespace Brawl.EditorTools
     /// </summary>
     public static class MiniGame01PlayerModelsSetup
     {
-        const string SessionKey = "Brawl.MiniGame01PlayerModelsSetup.RanV5";
+        const string SessionKey = "Brawl.MiniGame01PlayerModelsSetup.RanV8AttackTiming";
         const string HitVoicePath = "Assets/Brawl/Resources/Audio/HitVoice_Ah.mp3";
+        const string PuncherVictimPrefabPath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/Demos Assets/Prefabs/PR_PuncherVictim_Mannequin.prefab";
 
         static readonly string[] CharacterPrefabPaths =
         {
@@ -108,8 +111,10 @@ namespace Brawl.EditorTools
                 mover.DisableRootMotion = true;
                 hero.Mover = mover;
                 hero.Mecanim = visualAnimator;
-                hero.Ragdoll = null;
                 hero.ProcessInput = false;
+
+                RagdollAnimator2 ragdoll = ConfigurePuncherVictimRagdoll(root, visualAnimator);
+                hero.Ragdoll = ragdoll;
 
                 body.mass = 20f;
                 body.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
@@ -134,6 +139,10 @@ namespace Brawl.EditorTools
                 controller.Mover = mover;
                 controller.Hero = hero;
                 controller.Mecanim = visualAnimator;
+                controller.Ragdoll = ragdoll;
+                controller.PunchAnimationLockSeconds = 1.25f;
+                controller.PunchMovementLockSeconds = 1.23f;
+                controller.UppercutAnimationLockSeconds = 0.8f;
                 controller.PunchHitRange = 1.55f;
                 controller.PunchHitAngle = 55f;
                 controller.PunchPointBlankRange = 0.8f;
@@ -143,17 +152,24 @@ namespace Brawl.EditorTools
                 controller.KnockdownGroundSeconds = 1.55f;
                 controller.GetUpFaceSeconds = 1.35f;
                 controller.GetUpBackSeconds = 1.65f;
-                controller.KnockdownSlideSpeed = 4.8f;
-                controller.KnockdownLiftSpeed = 2.4f;
-                controller.KnockbackControlSeconds = 0.65f;
-                controller.KnockbackDeceleration = 8f;
-                controller.KnockbackSpinSpeed = 0.75f;
-                controller.KnockbackSpinDeceleration = 1.2f;
+                controller.KnockdownSlideSpeed = 5.3f;
+                controller.KnockdownLiftSpeed = 3f;
+                controller.KnockbackControlSeconds = 1f;
+                controller.KnockbackDeceleration = 5.3f;
+                controller.KnockbackSpinSpeed = 1.25f;
+                controller.KnockbackSpinDeceleration = 1.5f;
+                controller.RagdollHorizontalForceScale = 0.31f;
                 controller.VisualFallAngle = 82f;
+                controller.VisualTumbleDegrees = 180f;
                 controller.VisualFallDelay = 0.1f;
-                controller.VisualFallSeconds = 0.34f;
+                controller.VisualFallSeconds = 0.5f;
                 controller.VisualFallLift = 0.02f;
                 controller.GetUpAlignmentBlendSeconds = 0.5f;
+
+                RagdollNetworkSync poseSync = GetOrAdd<RagdollNetworkSync>(root);
+                poseSync.enabled = true;
+                poseSync.SendsPerSecond = 25f;
+                poseSync.BufferTimeMultiplier = 2f;
 
                 GetOrAdd<LocalCameraRig>(root);
                 GetOrAdd<PlayerAttributes>(root);
@@ -180,6 +196,72 @@ namespace Brawl.EditorTools
         {
             T component = root.GetComponent<T>();
             return component != null ? component : root.AddComponent<T>();
+        }
+
+        static RagdollAnimator2 ConfigurePuncherVictimRagdoll(GameObject root, Animator visualAnimator)
+        {
+            GameObject sourcePrefab = AssetDatabase.LoadAssetAtPath<GameObject>(PuncherVictimPrefabPath);
+            RagdollAnimator2 source = sourcePrefab != null
+                ? sourcePrefab.GetComponent<RagdollAnimator2>()
+                : null;
+            if (source == null)
+                throw new InvalidOperationException($"找不到 Punch Demo Bot 的 RagdollAnimator2: {PuncherVictimPrefabPath}");
+
+            RagdollAnimator2 target = GetOrAdd<RagdollAnimator2>(root);
+            List<RagdollAnimatorFeatureHelper> copiedFeatures = CloneBotFeatures(source.Settings.ExtraFeatures);
+
+            // 复制 Bot 的质量、弹簧、阻尼、速度限制等公共参数；骨骼链必须按当前皮肤重新生成。
+            source.Settings.ApplyAllPropertiesToOtherRagdoll(target.Settings);
+            target.Settings.ExtraFeatures = copiedFeatures;
+            target.Settings.BaseTransform = root.transform;
+            target.Settings.HelperOwnerTransform = root.transform;
+            target.Settings.Mecanim = visualAnimator;
+            target.Settings.TargetParentForRagdollDummy = null;
+            target.Settings.TryFindBones(false);
+            foreach (RagdollBonesChain chain in target.Settings.Chains)
+            {
+                chain.AutoAdjustColliders(target.Settings.IsHumanoid);
+                chain.AutoAdjustPhysics();
+            }
+            target.Settings.StoreReferenceTPose();
+            target.UpdateAllAfterManualChanges();
+            target.enabled = true;
+            EditorUtility.SetDirty(target);
+            return target;
+        }
+
+        static List<RagdollAnimatorFeatureHelper> CloneBotFeatures(
+            List<RagdollAnimatorFeatureHelper> sourceFeatures)
+        {
+            var result = new List<RagdollAnimatorFeatureHelper>();
+            foreach (RagdollAnimatorFeatureHelper source in sourceFeatures)
+            {
+                if (source == null || source.FeatureReference == null) continue;
+
+                var copy = new RagdollAnimatorFeatureHelper
+                {
+                    FeatureReference = source.FeatureReference,
+                    CustomName = source.CustomName,
+                    customStringList = source.customStringList != null
+                        ? new List<string>(source.customStringList)
+                        : new List<string>(),
+                    // Bot 事件引用的是 Bot 自己的 Mover/Collider，玩家 Prefab 不能照搬；
+                    // 保留同样数量的空事件，玩法脚本负责锁定和恢复控制。
+                    customEventsList = source.customEventsList != null
+                        ? source.customEventsList.Select(_ => new UnityEngine.Events.UnityEvent()).ToList()
+                        : new List<UnityEngine.Events.UnityEvent>(),
+                    customObjectList = new List<UnityEngine.Object>()
+                };
+                copy.Enabled = source.Enabled;
+                copy.CopySettingsFrom(source);
+
+                // 玩家使用 Hero Puncher Controller，其中对应状态名是 Fall，不是 Victim 的 Fall Pose。
+                if (copy.HasVariable("Fall Animation:"))
+                    copy.RequestVariable("Fall Animation:", "Fall").SetValue("Fall");
+
+                result.Add(copy);
+            }
+            return result;
         }
 
         static void PersistNetworkAssetId(NetworkIdentity identity, string prefabPath)
@@ -219,7 +301,10 @@ namespace Brawl.EditorTools
 
             if (expected.Any(prefab => prefab == null)) return false;
             if (expected.Any(prefab => !HasPersistentNetworkAssetId(prefab.GetComponent<NetworkIdentity>())
-                || prefab.GetComponent<NetFAnnequinController>() == null)) return true;
+                || prefab.GetComponent<NetFAnnequinController>() == null
+                || prefab.GetComponent<RagdollAnimator2>() == null
+                || prefab.GetComponent<RagdollNetworkSync>() == null
+                || prefab.GetComponent<Demo_Ragd_Hero1>()?.Ragdoll == null)) return true;
 
             foreach (string modelsPath in PlayerModelsPaths)
             {
@@ -243,6 +328,7 @@ namespace Brawl.EditorTools
                 GameObject prefab = expected[i];
                 NetworkIdentity identity = prefab != null ? prefab.GetComponent<NetworkIdentity>() : null;
                 NetFAnnequinController controller = prefab != null ? prefab.GetComponent<NetFAnnequinController>() : null;
+                RagdollAnimator2 ragdoll = prefab != null ? prefab.GetComponent<RagdollAnimator2>() : null;
 
                 bool valid = prefab != null
                     && identity != null
@@ -252,9 +338,15 @@ namespace Brawl.EditorTools
                     && controller.Mover != null
                     && controller.Hero != null
                     && controller.Mecanim != null
+                    && controller.Ragdoll == ragdoll
+                    && ragdoll != null
+                    && ragdoll.Settings.ExtraFeatures != null
+                    && ragdoll.Settings.ExtraFeatures.Count >= 7
+                    && controller.Hero.Ragdoll == ragdoll
                     && controller.Mecanim.transform != prefab.transform
                     && prefab.GetComponent<NetworkTransformReliable>() != null
                     && prefab.GetComponent<NetworkAnimator>() != null
+                    && prefab.GetComponent<RagdollNetworkSync>() != null
                     && prefab.GetComponent<LocalCameraRig>() != null
                     && prefab.GetComponent<PlayerAttributes>() != null;
 
