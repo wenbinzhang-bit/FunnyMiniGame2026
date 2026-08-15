@@ -108,7 +108,8 @@ namespace Brawl
             if (slot.Root != null) slot.Root.SetActive(true);
 
             int score = player != null ? player.Score : 0;
-            if (slot.Name != null) slot.Name.text = $"Player {index + 1}";
+            if (slot.Name != null)
+                slot.Name.text = player != null ? BrawlHudNames.Label(player.NetId, hudPlayers) : $"Player {index + 1}";
             if (slot.Score != null) slot.Score.text = $"{score}/{scoreMax}";
             if (slot.BarFill != null)
             {
@@ -151,7 +152,7 @@ namespace Brawl
             if (HealthTitle != null) HealthTitle.text = "血量";
             if (HealthName != null)
             {
-                HealthName.text = $"自己  P{netId}";
+                HealthName.text = BrawlHudNames.LocalLabel(netId);
                 HealthName.color = new Color(0.45f, 0.95f, 0.55f);
             }
 
@@ -188,7 +189,7 @@ namespace Brawl
             {
                 if (i > 0 && ordered[i].Score < ordered[i - 1].Score)
                     rank = i + 1;
-                lines.Add($"第{rank}名    Player {hudPlayers.IndexOf(ordered[i]) + 1}    {ordered[i].Score}分");
+                lines.Add($"第{rank}名    {BrawlHudNames.Label(ordered[i].NetId, hudPlayers)}    {ordered[i].Score}分");
             }
 
             RankingBody.text = lines.Count == 0 ? "无人参赛" : string.Join("\n", lines);

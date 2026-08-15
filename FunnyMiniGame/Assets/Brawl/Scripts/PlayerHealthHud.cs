@@ -84,7 +84,7 @@ namespace Brawl
                 float fill = Mathf.Clamp01(attr.HealthNormalized);
 
                 nameStyle.normal.textColor = mine ? new Color(0.45f, 0.95f, 0.55f) : Color.white;
-                string name = mine ? $"自己  P{attr.netId}" : $"P{attr.netId}";
+                string name = mine ? BrawlHudNames.LocalLabel(attr.netId) : BrawlHudNames.Label(attr.netId);
                 GUI.Label(new Rect(PanelX + 12f, rowY, 150f, 20f), name, nameStyle);
 
                 hpStyle.normal.textColor = dead ? new Color(1f, 0.4f, 0.35f) : new Color(1f, 1f, 1f, 0.9f);

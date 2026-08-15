@@ -222,7 +222,7 @@ namespace Brawl
                 ? "无人参赛"
                 : DescribeWinner();
             string reason = reachedScoreCap
-                ? $"P{capWinnerNetId} 达到 {HudScoreMax} 分!"
+                ? $"{PlayerLabel(capWinnerNetId)} 达到 {HudScoreMax} 分!"
                 : "时间到!";
             statusText = $"{reason} {winner}  |  {RoundRestartDelay:0} 秒后开新回合";
             Debug.Log($"BRAWL_SMOKE: ROUND_ENDED {statusText} | {rankText}");
@@ -355,6 +355,11 @@ namespace Brawl
             }
         }
 
+        string PlayerLabel(uint netId)
+        {
+            return BrawlHudNames.Label(netId, players.Select(p => p.motor));
+        }
+
         [Server]
         PlayerEntry FindPlayer(uint netId)
         {
@@ -388,7 +393,7 @@ namespace Brawl
             foreach (KpiComputerObjective computer in AllComputers())
             {
                 if (computer == null || !computer.IsHeld) continue;
-                names.Add($"P{computer.HolderNetId}");
+                names.Add(PlayerLabel(computer.HolderNetId));
             }
 
             if (names.Count == 0) return "电脑无人持有";
@@ -406,8 +411,8 @@ namespace Brawl
             int topScore = ranked[0].score;
             var winners = ranked.Where(p => p.score == topScore).ToList();
             if (winners.Count == 1)
-                return $"第1名 P{winners[0].id} {winners[0].score}分";
-            return "并列第1名 " + string.Join("、", winners.Select(p => $"P{p.id} {p.score}分"));
+                return $"第1名 {PlayerLabel(winners[0].id)} {winners[0].score}分";
+            return "并列第1名 " + string.Join("、", winners.Select(p => $"{PlayerLabel(p.id)} {p.score}分"));
         }
 
         [Server]
@@ -420,7 +425,8 @@ namespace Brawl
         {
             var ranked = RankedPlayers(source);
             if (ranked.Count == 0) return "";
-            return string.Join("   ", ranked.Select(p => $"{p.rank}.P{p.id}:{p.score}分"));
+            var roster = source;
+            return string.Join("   ", ranked.Select(p => $"{p.rank}.{BrawlHudNames.Label(p.id, roster)}:{p.score}分"));
         }
 
         static List<(int rank, uint id, int score)> RankedPlayers(IEnumerable<IBrawlPlayer> source)
