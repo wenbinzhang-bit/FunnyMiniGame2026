@@ -25,9 +25,9 @@ namespace Brawl
         [Min(0.1f)] public float UppercutAnimationLockSeconds = 0.8f;
 
         [Header("Player Punch Hit Detection")]
-        [Min(0.5f)] public float PunchHitRange = 1.3f;
+        [Min(0.5f)] public float PunchHitRange = 0.8f;
         [Range(10f, 120f)] public float PunchHitAngle = 55f;
-        [Min(0f)] public float PunchPointBlankRange = 0.65f;
+        [Min(0f)] public float PunchPointBlankRange = 0.55f;
 
         [Header("Hit Voice")]
         public AudioClip HitVoiceClip;
@@ -42,6 +42,12 @@ namespace Brawl
         public Vector3 ComputerHoldOffset = new Vector3(0f, 0.06f, 0.08f);
         public Vector3 ComputerHoldEuler = new Vector3(8f, 0f, 0f);
         [Min(0f)] public float ComputerDropForward = 0.8f;
+
+        [Header("Turbo")]
+        [Tooltip("按住 Shift 加速跑可连续使用的秒数")]
+        [Min(0.1f)] public float TurboDurationSeconds = 5f;
+        [Tooltip("松开 Shift 后从空恢复到满所需的秒数")]
+        [Min(0.1f)] public float TurboRechargeSeconds = 5f;
 
         [Header("Knockdown / Get Up")]
         [Min(0.1f)] public float KnockdownGroundSeconds = 1.55f;
@@ -68,6 +74,7 @@ namespace Brawl
         [SyncVar(hook = nameof(OnSyncGrounded))] bool syncGrounded = true;
         [SyncVar(hook = nameof(OnSyncSpeed))] float syncSpeed;
         [SyncVar(hook = nameof(OnSyncHoldingComputer))] bool syncHoldingComputer;
+        [SyncVar] float syncTurboRemaining = 5f;
 
         public bool InputActive { get; set; } = true;
         public Vector3 SpawnPosition { get; set; }
@@ -86,11 +93,14 @@ namespace Brawl
         public bool IsKnockedDown { get; private set; }
         public Vector3 KnockbackVelocity { get; private set; }
         public float KnockbackSpinVelocity { get; private set; }
+        public float TurboRemainingSeconds => Mathf.Clamp(syncTurboRemaining, 0f, Mathf.Max(0.1f, TurboDurationSeconds));
+        public float TurboNormalized => Mathf.Clamp01(TurboRemainingSeconds / Mathf.Max(0.1f, TurboDurationSeconds));
 
         Vector3 pendingMove;
         float lastSendTime;
         Vector3 lastSentDir;
         byte lastSentButtons;
+        byte serverButtons;
         float baseMoveSpeed = 4.5f;
         FAnnequinMouseActions mouseActions;
         FAnnequinGrabHelper grabHelper;
@@ -199,6 +209,7 @@ namespace Brawl
         {
             SpawnPosition = transform.position;
             ResetServerJumpState();
+            ServerResetTurbo();
             if (Mover != null && Mover.Rigb != null)
                 standingConstraints = Mover.Rigb.constraints;
 
@@ -366,6 +377,9 @@ namespace Brawl
         {
             bool attackMovementLocked = IsAttackMovementLocked();
 
+            if (isServer)
+                ServerTickTurbo(Time.deltaTime, attackMovementLocked);
+
             if (isServer && !serverJumpAvailable && Mover != null && !Mover.isGrounded)
                 serverLeftGroundSinceJump = true;
 
@@ -431,24 +445,18 @@ namespace Brawl
         {
             try
             {
+            serverButtons = buttons;
             if (!InputActive || Time.time < attackMovementLockedUntil)
             {
                 pendingMove = Vector3.zero;
+                ApplyServerMovementSpeed();
                 return;
             }
 
             moveWorldDir.y = 0f;
             pendingMove = moveWorldDir.sqrMagnitude > 0.0001f ? Vector3.ClampMagnitude(moveWorldDir, 1f) : Vector3.zero;
 
-            if (Mover)
-            {
-                if ((buttons & BtnSprint) != 0 && Mover.HoldShiftForSpeed > 0f)
-                    Mover.MovementSpeed = Mover.HoldShiftForSpeed;
-                else if ((buttons & BtnCtrl) != 0 && Mover.HoldCtrlForSpeed > 0f)
-                    Mover.MovementSpeed = Mover.HoldCtrlForSpeed;
-                else
-                    Mover.MovementSpeed = baseMoveSpeed;
-            }
+            ApplyServerMovementSpeed();
             }
             catch (System.Exception e)
             {
@@ -575,18 +583,67 @@ namespace Brawl
         public void ServerBotSetMove(Vector3 worldDir, bool sprint = false)
         {
             if (!isServer) return;
+            if (sprint) serverButtons |= BtnSprint;
+            else serverButtons &= unchecked((byte)~BtnSprint);
             if (!InputActive || Time.time < attackMovementLockedUntil)
             {
                 pendingMove = Vector3.zero;
+                ApplyServerMovementSpeed();
                 return;
             }
 
             worldDir.y = 0f;
             pendingMove = worldDir.sqrMagnitude > 0.0001f ? Vector3.ClampMagnitude(worldDir, 1f) : Vector3.zero;
+            ApplyServerMovementSpeed();
+        }
+
+        [Server]
+        public void ServerResetTurbo()
+        {
+            syncTurboRemaining = Mathf.Max(0.1f, TurboDurationSeconds);
+            serverButtons = 0;
+            ApplyServerMovementSpeed();
+        }
+
+        [Server]
+        void ServerTickTurbo(float deltaTime, bool attackMovementLocked)
+        {
+            float capacity = Mathf.Max(0.1f, TurboDurationSeconds);
+            float rechargeSeconds = Mathf.Max(0.1f, TurboRechargeSeconds);
+            bool sprintHeld = (serverButtons & BtnSprint) != 0;
+            bool canRun = InputActive && !IsDead && !IsKnockedDown && !IsGrabbed
+                && !attackMovementLocked && pendingMove.sqrMagnitude > 0.0001f;
+
+            float next = syncTurboRemaining;
+            if (sprintHeld && canRun && next > 0f)
+                next = Mathf.Max(0f, next - Mathf.Max(0f, deltaTime));
+            else if (!sprintHeld || !InputActive || IsDead || IsKnockedDown || IsGrabbed)
+                next = Mathf.Min(capacity, next + Mathf.Max(0f, deltaTime) * capacity / rechargeSeconds);
+
+            if (!Mathf.Approximately(syncTurboRemaining, next))
+                syncTurboRemaining = next;
+
+            ApplyServerMovementSpeed();
+        }
+
+        [Server]
+        void ApplyServerMovementSpeed()
+        {
             if (Mover == null) return;
-            Mover.MovementSpeed = sprint && Mover.HoldShiftForSpeed > 0f
-                ? Mover.HoldShiftForSpeed
-                : baseMoveSpeed;
+
+            bool turboActive = InputActive
+                && Time.time >= attackMovementLockedUntil
+                && pendingMove.sqrMagnitude > 0.0001f
+                && (serverButtons & BtnSprint) != 0
+                && syncTurboRemaining > 0.0001f
+                && Mover.HoldShiftForSpeed > 0f;
+
+            if (turboActive)
+                Mover.MovementSpeed = Mover.HoldShiftForSpeed;
+            else if ((serverButtons & BtnCtrl) != 0 && Mover.HoldCtrlForSpeed > 0f)
+                Mover.MovementSpeed = Mover.HoldCtrlForSpeed;
+            else
+                Mover.MovementSpeed = baseMoveSpeed;
         }
 
         public void ServerBotFace(Vector3 lookDir)

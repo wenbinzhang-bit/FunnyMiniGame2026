@@ -1007,9 +1007,9 @@ MonoBehaviour:
   PunchAnimationLockSeconds: 1.25
   PunchMovementLockSeconds: 1.23
   UppercutAnimationLockSeconds: 0.8
-  PunchHitRange: 1.3
+  PunchHitRange: 0.8
   PunchHitAngle: 55
-  PunchPointBlankRange: 0.65
+  PunchPointBlankRange: 0.55
   HitVoiceClip: {fileID: 8300000, guid: 0ad0ad27cf78f58428fb61fd64511316, type: 3}
   HitVoiceVolume: 0.9
   HitVoicePitchRange: {x: 0.96, y: 1.04}
@@ -1020,6 +1020,8 @@ MonoBehaviour:
   ComputerHoldOffset: {x: 0, y: 0.06, z: 0.08}
   ComputerHoldEuler: {x: 8, y: 0, z: 0}
   ComputerDropForward: 0.8
+  TurboDurationSeconds: 5
+  TurboRechargeSeconds: 5
   KnockdownGroundSeconds: 1.55
   GetUpFaceSeconds: 1.35
   GetUpBackSeconds: 1.65

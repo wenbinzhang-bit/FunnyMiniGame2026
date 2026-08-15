@@ -7,7 +7,7 @@ using UnityEngine.UI;
 namespace Brawl
 {
     /// <summary>
-    /// MiniGame_01 对局 HUD。只刷新场景 Canvas 下已摆好的 UGUI 节点，不在运行时创建界面。
+    /// MiniGame_01 对局 HUD。刷新已有 UGUI，并在旧 HUD Prefab 缺少时补建本地 Turbo 条。
     /// </summary>
     [DefaultExecutionOrder(100)]
     public sealed class BrawlMatchHud : MonoBehaviour
@@ -35,6 +35,11 @@ namespace Brawl
         public Text HealthValue;
         public Image HealthFill;
 
+        [Header("Local Turbo")]
+        public Text TurboTitle;
+        public Text TurboValue;
+        public Image TurboFill;
+
         [Header("Other")]
         public GameObject RankingRoot;
         public Text RankingBody;
@@ -45,6 +50,9 @@ namespace Brawl
         public Color HealthOkColor = new Color(0.25f, 0.82f, 0.38f);
         public Color HealthLowColor = new Color(0.9f, 0.25f, 0.2f);
         public Color HealthDeadColor = new Color(0.55f, 0.16f, 0.14f);
+        public Color TurboReadyColor = new Color(0.12f, 0.86f, 1f);
+        public Color TurboLowColor = new Color(1f, 0.55f, 0.12f);
+        public Color TurboEmptyColor = new Color(0.85f, 0.18f, 0.14f);
         public Color TimerNormalColor = Color.white;
         public Color TimerWarningColor = new Color(1f, 0.22f, 0.18f);
         public Color TimerWarningFlashColor = new Color(1f, 0.82f, 0.2f);
@@ -63,9 +71,12 @@ namespace Brawl
         Image timerFill;
         Color timerRingBase;
         Color timerFillBase;
+        float displayedTurbo = 1f;
+        bool hasDisplayedTurbo;
 
         void Awake()
         {
+            EnsureTurboVisuals();
             ApplyCjkFont();
             CacheTimerVisuals();
             EnsureBeepSource();
@@ -99,6 +110,7 @@ namespace Brawl
                 BindSlot(Slots[i], i, i < hudPlayers.Count ? hudPlayers[i] : null, scoreMax);
 
             BindLocalHealth();
+            BindLocalTurbo();
             BindRanking(gm);
         }
 
@@ -168,6 +180,139 @@ namespace Brawl
                         : HealthOkColor;
                 SetFill(HealthFill, local.HealthNormalized);
             }
+        }
+
+        void BindLocalTurbo()
+        {
+            NetFAnnequinController local = null;
+            for (int i = 0; i < hudPlayers.Count; i++)
+            {
+                if (hudPlayers[i] is NetFAnnequinController fan && fan.isLocalPlayer)
+                {
+                    local = fan;
+                    break;
+                }
+            }
+
+            if (TurboTitle != null) TurboTitle.text = "SHIFT TURBO";
+            if (local == null)
+            {
+                if (TurboValue != null) TurboValue.text = "--";
+                SetFill(TurboFill, 0f);
+                hasDisplayedTurbo = false;
+                return;
+            }
+
+            float target = local.TurboNormalized;
+            if (!hasDisplayedTurbo)
+            {
+                displayedTurbo = target;
+                hasDisplayedTurbo = true;
+            }
+            else
+            {
+                // 网络值按发送间隔更新，HUD 做一层快速平滑，避免进度条阶梯式跳动。
+                displayedTurbo = Mathf.MoveTowards(displayedTurbo, target, Time.unscaledDeltaTime * 2f);
+            }
+
+            if (TurboValue != null)
+                TurboValue.text = target <= 0.001f ? "EMPTY" : $"{local.TurboRemainingSeconds:0.0}s";
+            if (TurboFill != null)
+            {
+                TurboFill.color = target <= 0.001f
+                    ? TurboEmptyColor
+                    : target <= 0.25f ? TurboLowColor : TurboReadyColor;
+                SetFill(TurboFill, displayedTurbo);
+            }
+        }
+
+        void EnsureTurboVisuals()
+        {
+            if (TurboTitle != null && TurboValue != null && TurboFill != null) return;
+
+            Transform existing = transform.Find("Turbo");
+            if (existing != null)
+            {
+                TurboTitle = existing.Find("Title")?.GetComponent<Text>();
+                TurboValue = existing.Find("BarBack/Value")?.GetComponent<Text>();
+                TurboFill = existing.Find("BarBack/Fill")?.GetComponent<Image>();
+                if (TurboTitle != null && TurboValue != null && TurboFill != null) return;
+            }
+
+            Font fallbackFont = HealthTitle != null && HealthTitle.font != null
+                ? HealthTitle.font
+                : Resources.GetBuiltinResource<Font>("Arial.ttf");
+
+            GameObject panelObject = new GameObject("Turbo", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            RectTransform panel = panelObject.GetComponent<RectTransform>();
+            panel.SetParent(transform, false);
+            panel.anchorMin = new Vector2(0f, 1f);
+            panel.anchorMax = new Vector2(0f, 1f);
+            panel.pivot = new Vector2(0f, 1f);
+            panel.anchoredPosition = new Vector2(24f, -286f);
+            panel.sizeDelta = new Vector2(268f, 48f);
+            Image panelImage = panelObject.GetComponent<Image>();
+            panelImage.color = new Color(0f, 0f, 0f, 0.72f);
+            panelImage.raycastTarget = false;
+
+            GameObject titleObject = new GameObject("Title", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+            RectTransform titleRect = titleObject.GetComponent<RectTransform>();
+            titleRect.SetParent(panel, false);
+            titleRect.anchorMin = new Vector2(0f, 0f);
+            titleRect.anchorMax = new Vector2(0f, 1f);
+            titleRect.pivot = new Vector2(0f, 0.5f);
+            titleRect.anchoredPosition = new Vector2(10f, 0f);
+            titleRect.sizeDelta = new Vector2(96f, 0f);
+            TurboTitle = titleObject.GetComponent<Text>();
+            TurboTitle.font = fallbackFont;
+            TurboTitle.fontSize = 17;
+            TurboTitle.fontStyle = FontStyle.Bold;
+            TurboTitle.alignment = TextAnchor.MiddleLeft;
+            TurboTitle.color = Color.white;
+            TurboTitle.raycastTarget = false;
+            TurboTitle.text = "SHIFT TURBO";
+
+            GameObject backObject = new GameObject("BarBack", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            RectTransform back = backObject.GetComponent<RectTransform>();
+            back.SetParent(panel, false);
+            back.anchorMin = new Vector2(0f, 0.5f);
+            back.anchorMax = new Vector2(0f, 0.5f);
+            back.pivot = new Vector2(0f, 0.5f);
+            back.anchoredPosition = new Vector2(106f, 0f);
+            back.sizeDelta = new Vector2(150f, 20f);
+            Image backImage = backObject.GetComponent<Image>();
+            backImage.color = new Color(0.12f, 0.12f, 0.12f, 0.96f);
+            backImage.raycastTarget = false;
+
+            GameObject fillObject = new GameObject("Fill", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            RectTransform fill = fillObject.GetComponent<RectTransform>();
+            fill.SetParent(back, false);
+            fill.anchorMin = Vector2.zero;
+            fill.anchorMax = Vector2.one;
+            fill.offsetMin = new Vector2(2f, 2f);
+            fill.offsetMax = new Vector2(-2f, -2f);
+            TurboFill = fillObject.GetComponent<Image>();
+            TurboFill.color = TurboReadyColor;
+            TurboFill.raycastTarget = false;
+
+            GameObject valueObject = new GameObject("Value", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+            RectTransform valueRect = valueObject.GetComponent<RectTransform>();
+            valueRect.SetParent(back, false);
+            valueRect.anchorMin = Vector2.zero;
+            valueRect.anchorMax = Vector2.one;
+            valueRect.offsetMin = Vector2.zero;
+            valueRect.offsetMax = Vector2.zero;
+            TurboValue = valueObject.GetComponent<Text>();
+            TurboValue.font = fallbackFont;
+            TurboValue.fontSize = 13;
+            TurboValue.fontStyle = FontStyle.Bold;
+            TurboValue.alignment = TextAnchor.MiddleCenter;
+            TurboValue.color = Color.white;
+            TurboValue.raycastTarget = false;
+            TurboValue.text = "5.0s";
+            Outline outline = valueObject.AddComponent<Outline>();
+            outline.effectColor = new Color(0f, 0f, 0f, 0.75f);
+            outline.effectDistance = new Vector2(1f, -1f);
         }
 
         void BindRanking(BrawlGameManager gm)

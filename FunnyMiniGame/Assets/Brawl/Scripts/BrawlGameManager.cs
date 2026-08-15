@@ -170,6 +170,8 @@ namespace Brawl
                 p.reviveAt = 0;
                 p.motor.Score = 0;
                 p.motor.InputActive = true;
+                if (p.motor is NetFAnnequinController fan)
+                    fan.ServerResetTurbo();
                 if (p.motor.Attributes != null)
                     p.motor.Attributes.ServerResetHealth();
                 Transform start = NetworkManager.singleton.GetStartPosition();
@@ -333,7 +335,10 @@ namespace Brawl
         {
             p.reviveAt = 0;
             if (p.motor is NetFAnnequinController fan)
+            {
                 fan.ServerForceDropComputer();
+                fan.ServerResetTurbo();
+            }
             if (p.motor.Attributes != null)
                 p.motor.Attributes.ServerResetHealth();
 

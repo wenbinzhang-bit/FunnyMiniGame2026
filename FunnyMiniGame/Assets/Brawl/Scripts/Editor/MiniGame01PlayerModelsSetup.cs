@@ -150,9 +150,9 @@ namespace Brawl.EditorTools
                 controller.PunchAnimationLockSeconds = 1.25f;
                 controller.PunchMovementLockSeconds = 1.23f;
                 controller.UppercutAnimationLockSeconds = 0.8f;
-                controller.PunchHitRange = 1.3f;
+                controller.PunchHitRange = 0.8f;
                 controller.PunchHitAngle = 55f;
-                controller.PunchPointBlankRange = 0.65f;
+                controller.PunchPointBlankRange = 0.55f;
                 controller.HitVoiceClip = AssetDatabase.LoadAssetAtPath<AudioClip>(HitVoicePath);
                 controller.HitVoiceVolume = 0.9f;
                 controller.HitVoicePitchRange = new Vector2(0.96f, 1.04f);
@@ -163,6 +163,8 @@ namespace Brawl.EditorTools
                 controller.ComputerHoldOffset = new Vector3(0f, 0.06f, 0.08f);
                 controller.ComputerHoldEuler = new Vector3(8f, 0f, 0f);
                 controller.ComputerDropForward = 0.8f;
+                controller.TurboDurationSeconds = 5f;
+                controller.TurboRechargeSeconds = 5f;
                 controller.KnockdownGroundSeconds = 1.55f;
                 controller.GetUpFaceSeconds = 1.35f;
                 controller.GetUpBackSeconds = 1.65f;
