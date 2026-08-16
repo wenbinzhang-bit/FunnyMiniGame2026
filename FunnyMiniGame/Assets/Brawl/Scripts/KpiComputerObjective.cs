@@ -163,10 +163,9 @@ namespace Brawl
             if (!BrawlGameManager.PassTheBuckActive)
                 return;
 
-            float remaining = BrawlGameManager.Instance != null
-                ? BrawlGameManager.Instance.HudRemainingSeconds
-                : 30f;
-            float heat = remaining <= 10f ? Mathf.InverseLerp(10f, 0f, remaining) : 0f;
+            float heat = BrawlGameManager.Instance != null
+                ? Mathf.SmoothStep(0f, 1f, BrawlGameManager.Instance.HudPotProgress)
+                : 0f;
             typingLoopSource.pitch = 1f + heat * 0.55f;
             typingLoopSource.volume = FuseLoopVolume * (0.78f + heat * 0.45f);
         }

@@ -75,6 +75,8 @@ namespace Brawl
         public Text CursorHintText;
         public Button NextRoundButton;
         public Text NextRoundLabel;
+        public Button RestartButton;
+        public Text RestartLabel;
         public Button LobbyButton;
         public Text LobbyLabel;
         public Button LobbyStartButton;
@@ -173,6 +175,7 @@ namespace Brawl
             EnsureCursorHint();
             EnsureNextRoundButton();
             EnsureRoundResultPanel();
+            EnsureRestartButton();
             EnsureLobbyButton();
             EnsureLobbyReadyPanel();
             EnsureLobbyStartConfirm();
@@ -265,6 +268,8 @@ namespace Brawl
                 RankingRoot.SetActive(false);
             if (NextRoundButton != null)
                 NextRoundButton.gameObject.SetActive(false);
+            if (RestartButton != null)
+                RestartButton.gameObject.SetActive(false);
             if (LobbyButton != null)
                 LobbyButton.gameObject.SetActive(false);
             if (LobbyStartButton != null)
@@ -322,7 +327,7 @@ namespace Brawl
                     TimerText.text = FormatTime(remaining);
             }
             BindLevelHint(gm);
-            BindPotDanger(gm, remaining);
+            BindPotDanger(gm);
 
             ApplyTimerWarning(
                 !hidePlayTimer && gm != null && (gm.HudIsPlaying || (gm.HudIsWaiting && remaining > 0f) || gm.HudIsRoundEnd),
@@ -362,6 +367,7 @@ namespace Brawl
             BindRanking(gm);
             BindRoundResultPanel(gm);
             BindNextRoundButton(gm);
+            BindRestartButton(gm);
             BindLobbyButton(gm);
             BindRulesPanel(gm);
             BindCursorHint();
@@ -556,7 +562,11 @@ namespace Brawl
 
         void EnsureRoundResultPanel()
         {
-            if (roundResultRoot != null && roundResultCards[0] != null) return;
+            if (roundResultRoot != null && roundResultCards[0] != null)
+            {
+                EnsureRestartButton();
+                return;
+            }
 
             Transform stale = transform.Find("RoundResult");
             if (stale != null)
@@ -621,6 +631,7 @@ namespace Brawl
             roundResultCountdown = CreateResultText(root, "Countdown", fallbackFont, 23, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(1f, 0.82f, 0.20f, 1f), true);
             SetHudRect(roundResultCountdown.rectTransform, new Vector2(0.30f, 0.015f), new Vector2(0.70f, 0.07f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
             roundResultCountdown.text = "15s后自动进入下一关";
+            EnsureRestartButton();
             rootObject.SetActive(false);
         }
 
@@ -799,9 +810,9 @@ namespace Brawl
                 RectTransform countdownRect = roundResultCountdown.rectTransform;
                 if (final)
                 {
-                    SetHudRect(countdownRect, new Vector2(0.30f, 0.075f), new Vector2(0.70f, 0.155f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
-                    roundResultCountdown.fontSize = 28;
-                    roundResultCountdown.text = "3 关全部结束";
+                    SetHudRect(countdownRect, new Vector2(0.30f, 0.015f), new Vector2(0.70f, 0.07f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+                    roundResultCountdown.fontSize = 20;
+                    roundResultCountdown.text = "3 关全部结束，可重新开始";
                 }
                 else
                 {
@@ -1149,6 +1160,102 @@ namespace Brawl
             Debug.Log("BRAWL_SMOKE: NEXT_ROUND_BUTTON_CLICKED");
             if (BrawlGameManager.Instance != null)
                 BrawlGameManager.Instance.RequestNextRound();
+        }
+
+        void BindRestartButton(BrawlGameManager gm)
+        {
+            EnsureRestartButton();
+            bool show = gm != null && gm.HudIsFinalKpi;
+            if (RestartButton != null)
+                RestartButton.gameObject.SetActive(show);
+            if (!show) return;
+            RestartButton.interactable = true;
+            RestartButton.transform.SetAsLastSibling();
+            if (RestartLabel != null)
+                RestartLabel.text = "重新开始";
+        }
+
+        void OnRestartClicked()
+        {
+            Debug.Log("BRAWL_SMOKE: RESTART_TO_LOBBY_CLICKED");
+            if (BrawlGameManager.Instance != null)
+                BrawlGameManager.Instance.RequestReturnToMenu();
+        }
+
+        public void ResetSessionVisuals()
+        {
+            playedFinalKpiReaction = false;
+            lastMatchSeq = -1;
+            lastHudScene = "";
+            hasDisplayedTurbo = false;
+            lobbyStartConfirmVisible = false;
+            HideLobbyStartConfirm();
+            if (roundResultRoot != null)
+                roundResultRoot.SetActive(false);
+            if (NextRoundButton != null)
+                NextRoundButton.gameObject.SetActive(false);
+            if (RestartButton != null)
+                RestartButton.gameObject.SetActive(false);
+            if (RulesRoot != null)
+                RulesRoot.SetActive(false);
+        }
+
+        void EnsureRestartButton()
+        {
+            if (RestartButton != null && RestartLabel != null)
+            {
+                if (roundResultRoot != null && RestartButton.transform.parent != roundResultRoot.transform)
+                    RestartButton.transform.SetParent(roundResultRoot.transform, false);
+                return;
+            }
+
+            Transform existing = transform.Find("Restart");
+            if (existing == null && roundResultRoot != null)
+                existing = roundResultRoot.transform.Find("Restart");
+            if (existing != null)
+            {
+                RestartButton = existing.GetComponent<Button>();
+                RestartLabel = existing.Find("Label")?.GetComponent<Text>();
+                if (RestartButton != null && RestartLabel != null)
+                {
+                    RestartButton.onClick.RemoveListener(OnRestartClicked);
+                    RestartButton.onClick.AddListener(OnRestartClicked);
+                    RestartButton.gameObject.SetActive(false);
+                    return;
+                }
+            }
+
+            Font fallbackFont = TimerText != null && TimerText.font != null
+                ? TimerText.font
+                : Resources.GetBuiltinResource<Font>("Arial.ttf");
+            Transform parent = roundResultRoot != null ? roundResultRoot.transform : transform;
+            GameObject buttonObject = new GameObject("Restart", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+            RectTransform buttonRect = buttonObject.GetComponent<RectTransform>();
+            buttonRect.SetParent(parent, false);
+            SetHudRect(buttonRect, new Vector2(0.38f, 0.075f), new Vector2(0.62f, 0.155f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            Image image = buttonObject.GetComponent<Image>();
+            image.color = new Color(0.88f, 0.63f, 0.03f, 1f);
+            image.raycastTarget = true;
+            EnsureGraphicOutline(image, new Color(0.58f, 0.52f, 0.38f, 1f), 2f);
+            RestartButton = buttonObject.GetComponent<Button>();
+            RestartButton.onClick.AddListener(OnRestartClicked);
+
+            GameObject labelObject = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+            RectTransform labelRect = labelObject.GetComponent<RectTransform>();
+            labelRect.SetParent(buttonRect, false);
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+            RestartLabel = labelObject.GetComponent<Text>();
+            RestartLabel.font = fallbackFont;
+            RestartLabel.fontSize = 28;
+            RestartLabel.fontStyle = FontStyle.Bold;
+            RestartLabel.alignment = TextAnchor.MiddleCenter;
+            RestartLabel.color = new Color(0.04f, 0.04f, 0.035f, 1f);
+            RestartLabel.raycastTarget = false;
+            RestartLabel.text = "重新开始";
+            buttonObject.SetActive(false);
         }
 
         void HideDebugTimerButton()
@@ -2092,7 +2199,7 @@ namespace Brawl
                 LevelHintText.text = $"第{index + 1}/{BrawlLevelCatalog.MaxLevelCount}关";
         }
 
-        void BindPotDanger(BrawlGameManager gm, float remaining)
+        void BindPotDanger(BrawlGameManager gm)
         {
             EnsurePotDangerIcon();
             bool show = potDangerIcon != null && gm != null && gm.HudShowPotDanger;
@@ -2100,19 +2207,25 @@ namespace Brawl
                 potDangerIcon.gameObject.SetActive(show);
             if (!show) return;
 
-            float heat = Mathf.InverseLerp(24f, 0.35f, remaining);
-            float hz = Mathf.Lerp(0.65f, 10f, heat * heat);
+            float progress = Mathf.Clamp01(gm.HudPotProgress);
+            float rush = progress * progress;
+            float hz = Mathf.Lerp(0.4f, 8.5f, rush);
             float pulse = Mathf.PingPong(Time.unscaledTime * hz * 2f, 1f);
-            Color dim = new Color(0.62f, 0.22f, 0.10f, 0.28f);
-            Color hot = Color.Lerp(TimerWarningColor, TimerWarningFlashColor, Mathf.Clamp01(heat + 0.15f));
-            potDangerIcon.color = Color.Lerp(dim, hot, 0.22f + pulse * 0.78f);
+            Color idle = new Color(0.42f, 0.40f, 0.36f, 0.92f);
+            Color warn = new Color(1f, 0.58f, 0.14f, 1f);
+            Color danger = new Color(1f, 0.16f, 0.10f, 1f);
+            Color heatColor = progress < 0.55f
+                ? Color.Lerp(idle, warn, progress / 0.55f)
+                : Color.Lerp(warn, danger, (progress - 0.55f) / 0.45f);
+            float swing = Mathf.Lerp(0.16f, 1f, rush);
+            potDangerIcon.color = Color.Lerp(heatColor * 0.55f, Color.Lerp(heatColor, Color.white, 0.22f), 0.35f + pulse * swing);
 
             if (timerRing != null)
-                timerRing.color = Color.Lerp(timerRingBase, hot, 0.15f + pulse * 0.55f);
+                timerRing.color = Color.Lerp(timerRingBase, heatColor, 0.12f + pulse * swing * 0.7f);
             if (timerFill != null)
-                timerFill.color = Color.Lerp(timerFillBase, new Color(0.42f, 0.08f, 0.06f, 0.92f), pulse * (0.35f + heat * 0.65f));
+                timerFill.color = Color.Lerp(timerFillBase, new Color(0.38f, 0.07f, 0.05f, 0.94f), pulse * rush);
             if (LevelHintText != null && LevelHintText.gameObject.activeSelf)
-                LevelHintText.color = Color.Lerp(TimerNormalColor, hot, 0.2f + pulse * 0.8f);
+                LevelHintText.color = Color.Lerp(TimerNormalColor, heatColor, 0.15f + pulse * swing * 0.75f);
         }
 
         void EnsurePotDangerIcon()
@@ -2132,7 +2245,7 @@ namespace Brawl
             }
 
             if (potDangerSprite == null)
-                potDangerSprite = CreatePotDangerSprite();
+                potDangerSprite = CreateBombDangerSprite();
             potDangerIcon.sprite = potDangerSprite;
             potDangerIcon.preserveAspect = true;
             potDangerIcon.raycastTarget = false;
@@ -2140,28 +2253,34 @@ namespace Brawl
             potDangerIcon.gameObject.SetActive(false);
         }
 
-        static Sprite CreatePotDangerSprite()
+        static Sprite CreateBombDangerSprite()
         {
-            const int size = 64;
+            const int size = 96;
             var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
             {
                 filterMode = FilterMode.Bilinear,
                 wrapMode = TextureWrapMode.Clamp
             };
             var pixels = new Color[size * size];
+            Vector2 body = new Vector2(46f, 38f);
+            Vector2 fuseA = new Vector2(48f, 64f);
+            Vector2 fuseB = new Vector2(68f, 84f);
+            Vector2 spark = new Vector2(71f, 87f);
             for (int y = 0; y < size; y++)
             {
                 for (int x = 0; x < size; x++)
                 {
-                    float nx = (x - 31.5f) / 22f;
-                    float ny = (y - 26f) / 16.5f;
-                    float bowl = nx * nx + ny * ny;
-                    bool body = bowl <= 1f && bowl >= 0.42f && y <= 42;
-                    bool rim = y >= 39 && y <= 44 && Mathf.Abs(x - 32) <= 24;
-                    bool bottom = y >= 12 && y <= 16 && Mathf.Abs(x - 32) <= 10;
-                    float hx = Mathf.Abs(x - 32);
-                    bool handle = y >= 30 && y <= 38 && hx >= 22 && hx <= 30;
-                    pixels[y * size + x] = body || rim || bottom || handle
+                    float dx = x - body.x;
+                    float dy = y - body.y;
+                    bool ball = dx * dx + dy * dy <= 26f * 26f;
+                    bool cap = x >= 40 && x <= 54 && y >= 58 && y <= 68;
+                    bool fuse = DistToSegment(x, y, fuseA, fuseB) <= 2.3f;
+                    float sx = x - spark.x;
+                    float sy = y - spark.y;
+                    bool sparkCore = sx * sx + sy * sy <= 3.4f * 3.4f;
+                    bool sparkCross = (Mathf.Abs(sx) <= 1.4f && Mathf.Abs(sy) <= 8f)
+                        || (Mathf.Abs(sy) <= 1.4f && Mathf.Abs(sx) <= 8f);
+                    pixels[y * size + x] = ball || cap || fuse || sparkCore || sparkCross
                         ? Color.white
                         : Color.clear;
                 }
@@ -2169,7 +2288,18 @@ namespace Brawl
 
             tex.SetPixels(pixels);
             tex.Apply(false, true);
-            return Sprite.Create(tex, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), 64f);
+            return Sprite.Create(tex, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), 96f);
+        }
+
+        static float DistToSegment(int x, int y, Vector2 a, Vector2 b)
+        {
+            Vector2 p = new Vector2(x, y);
+            Vector2 ab = b - a;
+            float len = ab.sqrMagnitude;
+            if (len < 0.0001f)
+                return Vector2.Distance(p, a);
+            float t = Mathf.Clamp01(Vector2.Dot(p - a, ab) / len);
+            return Vector2.Distance(p, a + ab * t);
         }
 
         void EnsureLevelHint()
@@ -2296,7 +2426,7 @@ namespace Brawl
                     LevelHintText.alignment = TextAnchor.MiddleCenter;
                 }
                 if (potDangerIcon != null)
-                    SetHudRect(potDangerIcon.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 6f), new Vector2(34f, 34f));
+                    SetHudRect(potDangerIcon.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 6f), new Vector2(40f, 40f));
             }
 
             if (StatusText != null)

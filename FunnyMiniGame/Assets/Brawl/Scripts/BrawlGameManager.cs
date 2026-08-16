@@ -104,6 +104,15 @@ namespace Brawl
         public bool HudIsElimIntermission => IsPassTheBuck && elimIntermission;
         public bool HudHidePlayTimer => IsPassTheBuck && HudIsPlaying;
         public bool HudShowPotDanger => IsPassTheBuck && HudIsPlaying && !elimIntermission;
+        public float HudPotLifetime => Mathf.Max(1f, elimRoundDuration);
+        public float HudPotProgress
+        {
+            get
+            {
+                if (!HudShowPotDanger) return 0f;
+                return 1f - Mathf.Clamp01(HudRemainingSeconds / HudPotLifetime);
+            }
+        }
         public int ActiveBuckPenalty => Mathf.Max(0, buckPenalty);
         public float ActiveCatchStunSeconds => Mathf.Max(0.2f, catchStunSeconds);
         public float ActiveThrowSpeed => Mathf.Max(1f, throwSpeed);
@@ -274,6 +283,7 @@ namespace Brawl
         [SyncVar] float buckDumpSeconds = 30f;
         [SyncVar] int elimRoundIndex;
         [SyncVar] bool elimIntermission;
+        [SyncVar] float elimRoundDuration;
 
         const float ElimDurationMinSeconds = 5f;
         const float ElimDurationMaxSeconds = 30f;
@@ -327,6 +337,68 @@ namespace Brawl
         {
             base.OnStartClient();
             ApplyAirWall();
+        }
+
+        public override void OnStopClient()
+        {
+            ResetMatchStateForMenu();
+            base.OnStopClient();
+        }
+
+        public override void OnStopServer()
+        {
+            ResetMatchStateForMenu();
+            base.OnStopServer();
+        }
+
+        public void RequestReturnToMenu()
+        {
+            ResetMatchStateForMenu();
+            NetworkManager manager = NetworkManager.singleton;
+            if (manager != null)
+            {
+                if (NetworkServer.active)
+                    manager.StopHost();
+                else if (NetworkClient.active)
+                    manager.StopClient();
+                else if (!BrawlLevelCatalog.ActiveSceneIsLauncher())
+                    SceneManager.LoadScene(BrawlLevelCatalog.LauncherScene);
+                return;
+            }
+
+            if (!BrawlLevelCatalog.ActiveSceneIsLauncher())
+                SceneManager.LoadScene(BrawlLevelCatalog.LauncherScene);
+        }
+
+        public void ResetMatchStateForMenu()
+        {
+            changingScene = false;
+            pendingLevelName = "";
+            levelSessionStarted = false;
+            stoppingSession = false;
+            state = EState.Waiting;
+            currentLevelName = BrawlLevelCatalog.LauncherScene;
+            playMode = BrawlPlayMode.HoldKpi;
+            statusText = "";
+            rankText = "";
+            kpiBoardText = "";
+            rulesTitle = "本局规则";
+            rulesBody = "";
+            airWallActive = false;
+            matchSeq = 0;
+            elimRoundIndex = 0;
+            elimIntermission = false;
+            elimRoundDuration = 0f;
+            nextBotIndex = 0;
+            nextScoreTime = 0;
+            players.Clear();
+            ServerClearRoundRuntime("");
+            BrawlAirWall.SetAllActive(false);
+            if (Record != null)
+                Record.BeginNewRun();
+            BrawlMatchHud hud = FindObjectOfType<BrawlMatchHud>();
+            if (hud != null)
+                hud.ResetSessionVisuals();
         }
 
         void OnDestroy()
@@ -1201,6 +1273,7 @@ namespace Brawl
 
             elimIntermission = false;
             float duration = ElimDurationForRound(elimRoundIndex);
+            elimRoundDuration = duration;
             roundEndsAt = NetworkTime.time + duration;
             ServerDropAllComputers();
             ServerAssignRandomBuck();
