@@ -47,12 +47,15 @@ namespace Brawl
             public GameObject Root;
             public CanvasGroup Canvas;
             public GameObject Content;
+            public Text Header;
             public Text Name;
+            public Text YouMark;
             public Text Rank;
             public Text Score;
             public Text Performance;
             public Text TotalKpi;
             public Text Comment;
+            public Image Paper;
             public Image Avatar;
             public Image Stamp;
         }
@@ -644,6 +647,7 @@ namespace Brawl
             Image paper = CreateResultPanelImage(cardRect, "Paper", Vector2.zero, Vector2.one, Color.white);
             paper.sprite = resultPaperSprite;
             paper.preserveAspect = true;
+            card.Paper = paper;
 
             GameObject contentObject = new GameObject("Content", typeof(RectTransform));
             RectTransform content = contentObject.GetComponent<RectTransform>();
@@ -654,13 +658,19 @@ namespace Brawl
             Text header = CreateResultText(content, "Header", font, 21, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.08f, 0.07f, 0.055f, 1f), false);
             SetHudRect(header.rectTransform, new Vector2(0.20f, 0.91f), new Vector2(0.80f, 0.99f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
             header.text = "员工简历";
+            card.Header = header;
             CreateResultPanelImage(content, "HeaderLine", new Vector2(0.22f, 0.895f), new Vector2(0.78f, 0.900f), new Color(0.36f, 0.31f, 0.23f, 0.55f));
+
+            card.YouMark = CreateResultText(content, "YouMark", font, 15, FontStyle.Bold, TextAnchor.MiddleRight, new Color(0.78f, 0.42f, 0.02f, 1f), false);
+            SetHudRect(card.YouMark.rectTransform, new Vector2(0.68f, 0.82f), new Vector2(0.94f, 0.89f), new Vector2(1f, 0.5f), Vector2.zero, Vector2.zero);
+            card.YouMark.text = "自己";
+            card.YouMark.gameObject.SetActive(false);
 
             card.Avatar = CreateResultPanelImage(content, "Avatar", new Vector2(0.10f, 0.65f), new Vector2(0.46f, 0.88f), Color.white);
             card.Avatar.preserveAspect = true;
 
             card.Name = CreateResultText(content, "PlayerName", font, 15, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.12f, 0.10f, 0.07f, 0.94f), false);
-            SetHudRect(card.Name.rectTransform, new Vector2(0.48f, 0.82f), new Vector2(0.92f, 0.89f), new Vector2(0f, 0.5f), Vector2.zero, Vector2.zero);
+            SetHudRect(card.Name.rectTransform, new Vector2(0.48f, 0.82f), new Vector2(0.70f, 0.89f), new Vector2(0f, 0.5f), Vector2.zero, Vector2.zero);
             card.Name.horizontalOverflow = HorizontalWrapMode.Overflow;
 
             card.Rank = CreateResultText(content, "Rank", font, 21, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.08f, 0.07f, 0.055f, 1f), false);
@@ -766,6 +776,7 @@ namespace Brawl
                 {
                     card.Canvas.alpha = 0.64f;
                     card.Root.transform.localScale = Vector3.one;
+                    ApplyLocalResultCardStyle(card, null, final);
                     continue;
                 }
 
@@ -780,6 +791,7 @@ namespace Brawl
                     card.Avatar.sprite = ResolvePlayerAvatar(player);
                     card.Avatar.color = Color.white;
                 }
+                ApplyLocalResultCardStyle(card, player, final);
 
                 if (final)
                     BindFinalKpiCard(card, gm, player, i);
@@ -986,6 +998,63 @@ namespace Brawl
                 card.TotalKpi.text = $"综合KPI：{gm.HudRoundTotalKpi(player.NetId, player.Score)}分";
         }
 
+        void ApplyLocalResultCardStyle(RoundResultCard card, IBrawlPlayer player, bool final)
+        {
+            EnsureResultYouMark(card);
+            bool mine = player is NetFAnnequinController fan && fan.isLocalPlayer;
+            bool highlight = mine && final;
+            if (card.YouMark != null)
+            {
+                card.YouMark.gameObject.SetActive(highlight);
+                card.YouMark.text = "自己";
+            }
+
+            if (card.Header != null)
+                card.Header.text = highlight ? "我的简历" : "员工简历";
+            if (card.Name != null)
+            {
+                card.Name.color = highlight
+                    ? new Color(0.78f, 0.42f, 0.02f, 1f)
+                    : new Color(0.12f, 0.10f, 0.07f, 0.94f);
+                SetHudRect(
+                    card.Name.rectTransform,
+                    new Vector2(0.48f, 0.82f),
+                    highlight ? new Vector2(0.70f, 0.89f) : new Vector2(0.92f, 0.89f),
+                    new Vector2(0f, 0.5f),
+                    Vector2.zero,
+                    Vector2.zero);
+            }
+            if (card.Paper != null)
+                card.Paper.color = highlight
+                    ? new Color(1f, 0.93f, 0.72f, 1f)
+                    : Color.white;
+        }
+
+        void EnsureResultYouMark(RoundResultCard card)
+        {
+            if (card == null || card.Content == null) return;
+            if (card.Header == null)
+                card.Header = card.Content.transform.Find("Header")?.GetComponent<Text>();
+            if (card.Paper == null && card.Root != null)
+                card.Paper = card.Root.transform.Find("Paper")?.GetComponent<Image>();
+            if (card.YouMark != null) return;
+
+            Transform existing = card.Content.transform.Find("YouMark");
+            if (existing != null)
+            {
+                card.YouMark = existing.GetComponent<Text>();
+                return;
+            }
+
+            Font font = card.Name != null && card.Name.font != null
+                ? card.Name.font
+                : Resources.GetBuiltinResource<Font>("Arial.ttf");
+            card.YouMark = CreateResultText(card.Content.transform, "YouMark", font, 15, FontStyle.Bold, TextAnchor.MiddleRight, new Color(0.78f, 0.42f, 0.02f, 1f), false);
+            SetHudRect(card.YouMark.rectTransform, new Vector2(0.68f, 0.82f), new Vector2(0.94f, 0.89f), new Vector2(1f, 0.5f), Vector2.zero, Vector2.zero);
+            card.YouMark.text = "自己";
+            card.YouMark.gameObject.SetActive(false);
+        }
+
         static void BindFinalKpiCard(RoundResultCard card, BrawlGameManager gm, IBrawlPlayer player, int rankIndex)
         {
             int total = player.Score;
@@ -1075,10 +1144,10 @@ namespace Brawl
             titleRect.anchorMax = new Vector2(0f, 1f);
             titleRect.pivot = new Vector2(0f, 0.5f);
             titleRect.anchoredPosition = new Vector2(10f, 0f);
-            titleRect.sizeDelta = new Vector2(96f, 0f);
+            titleRect.sizeDelta = new Vector2(112f, 0f);
             TurboTitle = titleObject.GetComponent<Text>();
             TurboTitle.font = fallbackFont;
-            TurboTitle.fontSize = 17;
+            TurboTitle.fontSize = 16;
             TurboTitle.fontStyle = FontStyle.Bold;
             TurboTitle.alignment = TextAnchor.MiddleLeft;
             TurboTitle.color = Color.white;
@@ -1091,8 +1160,8 @@ namespace Brawl
             back.anchorMin = new Vector2(0f, 0.5f);
             back.anchorMax = new Vector2(0f, 0.5f);
             back.pivot = new Vector2(0f, 0.5f);
-            back.anchoredPosition = new Vector2(106f, 0f);
-            back.sizeDelta = new Vector2(150f, 20f);
+            back.anchoredPosition = new Vector2(118f, 0f);
+            back.sizeDelta = new Vector2(140f, 20f);
             Image backImage = backObject.GetComponent<Image>();
             backImage.color = new Color(0.12f, 0.12f, 0.12f, 0.96f);
             backImage.raycastTarget = false;
@@ -2600,11 +2669,37 @@ namespace Brawl
                 panel.anchorMin = new Vector2(0.5f, 0f);
                 panel.anchorMax = new Vector2(0.5f, 0f);
                 panel.pivot = new Vector2(0.5f, 0f);
-                panel.anchoredPosition = new Vector2(0f, 24f);
-                panel.sizeDelta = new Vector2(252f, 42f);
+                panel.anchoredPosition = new Vector2(-16f, 24f);
+                panel.sizeDelta = new Vector2(276f, 42f);
                 Image panelImage = panel.GetComponent<Image>();
                 if (panelImage != null)
                     panelImage.color = new Color(0.05f, 0.05f, 0.055f, 0.56f);
+
+                Transform title = panel.Find("Title");
+                if (title is RectTransform titleRect)
+                {
+                    titleRect.anchorMin = new Vector2(0f, 0f);
+                    titleRect.anchorMax = new Vector2(0f, 1f);
+                    titleRect.pivot = new Vector2(0f, 0.5f);
+                    titleRect.anchoredPosition = new Vector2(10f, 0f);
+                    titleRect.sizeDelta = new Vector2(112f, 0f);
+                    Text titleText = title.GetComponent<Text>();
+                    if (titleText != null)
+                    {
+                        titleText.fontSize = 16;
+                        titleText.horizontalOverflow = HorizontalWrapMode.Overflow;
+                    }
+                }
+
+                Transform back = panel.Find("BarBack");
+                if (back is RectTransform backRect)
+                {
+                    backRect.anchorMin = new Vector2(0f, 0.5f);
+                    backRect.anchorMax = new Vector2(0f, 0.5f);
+                    backRect.pivot = new Vector2(0f, 0.5f);
+                    backRect.anchoredPosition = new Vector2(118f, 0f);
+                    backRect.sizeDelta = new Vector2(148f, 20f);
+                }
             }
         }
 
