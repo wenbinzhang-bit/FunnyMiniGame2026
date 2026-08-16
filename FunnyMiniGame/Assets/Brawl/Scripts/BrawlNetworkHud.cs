@@ -14,6 +14,7 @@ namespace Brawl
         const float ConnectedWidth = 360f;
         const float DisconnectedHeight = 476f;
         const float ConnectedHeight = 154f;
+        const float JoinerConnectedHeight = 214f;
         const float ConnectingHeight = 164f;
 
         static readonly Color PanelColor = new Color(0.16f, 0.17f, 0.18f, 0.96f);
@@ -47,6 +48,8 @@ namespace Brawl
         RectTransform serverListContent;
         Button stopHostButton;
         Button stopClientButton;
+        Button readyButton;
+        Text readyLabel;
         Font font;
         NetworkManager manager;
         BrawlServerDiscovery discovery;
@@ -109,7 +112,14 @@ namespace Brawl
             if (backgroundRoot != null)
                 backgroundRoot.SetActive(!server && !client);
 
-            float height = connecting ? ConnectingHeight : server || client ? ConnectedHeight : DisconnectedHeight;
+            bool joiner = client && !server;
+            float height = connecting
+                ? ConnectingHeight
+                : joiner
+                    ? JoinerConnectedHeight
+                    : server || client
+                        ? ConnectedHeight
+                        : DisconnectedHeight;
             float width = server || client ? ConnectedWidth : PanelWidth;
             panel.sizeDelta = new Vector2(width, height);
 
@@ -155,6 +165,7 @@ namespace Brawl
                 RefreshServerList();
             }
 
+            RefreshReadyButton(joiner);
             if (stopHostButton != null)
                 stopHostButton.gameObject.SetActive(server && client);
             if (stopClientButton != null)
@@ -213,6 +224,42 @@ namespace Brawl
             statusText.text = status;
             statusText.color = status == "未连接" ? HintColor : dot;
             hintText.text = hint;
+        }
+
+        void RefreshReadyButton(bool joiner)
+        {
+            if (readyButton == null) return;
+            readyButton.gameObject.SetActive(joiner);
+            if (!joiner) return;
+
+            bool ready = false;
+            if (BrawlGameManager.Instance != null)
+                ready = BrawlGameManager.Instance.HudLocalIsReady();
+            else if (NetworkClient.localPlayer != null)
+            {
+                NetFAnnequinController local = NetworkClient.localPlayer.GetComponent<NetFAnnequinController>();
+                ready = local != null && local.LobbyReady;
+            }
+
+            if (readyLabel != null)
+                readyLabel.text = ready ? "取消准备" : "准备  READY";
+            Image image = readyButton.GetComponent<Image>();
+            if (image != null)
+                image.color = ready ? ServerColor : HostColor;
+        }
+
+        void OnReadyClicked()
+        {
+            if (BrawlGameManager.Instance != null)
+            {
+                BrawlGameManager.Instance.RequestLobbyReadyToggle();
+                return;
+            }
+
+            if (NetworkClient.localPlayer == null) return;
+            NetFAnnequinController local = NetworkClient.localPlayer.GetComponent<NetFAnnequinController>();
+            if (local != null)
+                local.CmdSetLobbyReady(!local.LobbyReady);
         }
 
         void LayoutStopPair()
@@ -598,6 +645,13 @@ namespace Brawl
                 new Vector2(16f, -82f), new Vector2(-32f, 26f));
             connectedIpText.text = "本机 IP  读取中";
             connectedIpText.gameObject.SetActive(false);
+
+            readyButton = CreateButton(connectedRoot.transform, "Ready", "准备  READY", HostColor, 20);
+            SetRect(readyButton.transform as RectTransform, new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0.5f, 0f),
+                new Vector2(0f, 54f), new Vector2(-32f, 42f));
+            readyLabel = readyButton.GetComponentInChildren<Text>();
+            readyButton.onClick.AddListener(OnReadyClicked);
+            readyButton.gameObject.SetActive(false);
 
             stopHostButton = CreateButton(connectedRoot.transform, "StopHost", "停止主机", StopColor, 16);
             SetRect(stopHostButton.transform as RectTransform, new Vector2(0f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 0f),

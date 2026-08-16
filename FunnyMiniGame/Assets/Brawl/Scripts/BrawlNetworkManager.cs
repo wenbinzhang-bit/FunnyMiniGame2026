@@ -54,27 +54,10 @@ namespace Brawl
 
         public override void OnStopServer()
         {
-            ResetJoinRuntime();
             BrawlServerDiscovery discovery = GetComponent<BrawlServerDiscovery>();
             if (discovery != null)
                 discovery.StopDiscovery();
-            BrawlSession.ClearPersistentActors();
             base.OnStopServer();
-        }
-
-        public override void OnStopClient()
-        {
-            ResetJoinRuntime();
-            BrawlSession.ClearPersistentActors();
-            base.OnStopClient();
-        }
-
-        void ResetJoinRuntime()
-        {
-            PendingBotCount = 0;
-            nextPlayerIndex = 0;
-            pendingBotsSpawned = false;
-            connectionSlots.Clear();
         }
 
         public override Transform GetStartPosition()

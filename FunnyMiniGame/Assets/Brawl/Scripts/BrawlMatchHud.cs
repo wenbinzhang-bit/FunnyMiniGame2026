@@ -75,8 +75,6 @@ namespace Brawl
         public Text CursorHintText;
         public Button NextRoundButton;
         public Text NextRoundLabel;
-        public Button RestartButton;
-        public Text RestartLabel;
         public Button LobbyButton;
         public Text LobbyLabel;
         public Button LobbyStartButton;
@@ -175,7 +173,6 @@ namespace Brawl
             EnsureCursorHint();
             EnsureNextRoundButton();
             EnsureRoundResultPanel();
-            EnsureRestartButton();
             EnsureLobbyButton();
             EnsureLobbyReadyPanel();
             EnsureLobbyStartConfirm();
@@ -268,8 +265,6 @@ namespace Brawl
                 RankingRoot.SetActive(false);
             if (NextRoundButton != null)
                 NextRoundButton.gameObject.SetActive(false);
-            if (RestartButton != null)
-                RestartButton.gameObject.SetActive(false);
             if (LobbyButton != null)
                 LobbyButton.gameObject.SetActive(false);
             if (LobbyStartButton != null)
@@ -367,7 +362,6 @@ namespace Brawl
             BindRanking(gm);
             BindRoundResultPanel(gm);
             BindNextRoundButton(gm);
-            BindRestartButton(gm);
             BindLobbyButton(gm);
             BindRulesPanel(gm);
             BindCursorHint();
@@ -562,11 +556,7 @@ namespace Brawl
 
         void EnsureRoundResultPanel()
         {
-            if (roundResultRoot != null && roundResultCards[0] != null)
-            {
-                EnsureRestartButton();
-                return;
-            }
+            if (roundResultRoot != null && roundResultCards[0] != null) return;
 
             Transform stale = transform.Find("RoundResult");
             if (stale != null)
@@ -631,7 +621,6 @@ namespace Brawl
             roundResultCountdown = CreateResultText(root, "Countdown", fallbackFont, 23, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(1f, 0.82f, 0.20f, 1f), true);
             SetHudRect(roundResultCountdown.rectTransform, new Vector2(0.30f, 0.015f), new Vector2(0.70f, 0.07f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
             roundResultCountdown.text = "15s后自动进入下一关";
-            EnsureRestartButton();
             rootObject.SetActive(false);
         }
 
@@ -810,9 +799,9 @@ namespace Brawl
                 RectTransform countdownRect = roundResultCountdown.rectTransform;
                 if (final)
                 {
-                    SetHudRect(countdownRect, new Vector2(0.30f, 0.015f), new Vector2(0.70f, 0.07f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
-                    roundResultCountdown.fontSize = 20;
-                    roundResultCountdown.text = "3 关全部结束，可重新开始";
+                    SetHudRect(countdownRect, new Vector2(0.30f, 0.075f), new Vector2(0.70f, 0.155f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+                    roundResultCountdown.fontSize = 28;
+                    roundResultCountdown.text = "3 关全部结束";
                 }
                 else
                 {
@@ -1162,107 +1151,17 @@ namespace Brawl
                 BrawlGameManager.Instance.RequestNextRound();
         }
 
-        void BindRestartButton(BrawlGameManager gm)
-        {
-            EnsureRestartButton();
-            bool show = gm != null && gm.HudIsFinalKpi;
-            if (RestartButton != null)
-                RestartButton.gameObject.SetActive(show);
-            if (!show) return;
-            RestartButton.interactable = true;
-            RestartButton.transform.SetAsLastSibling();
-            if (RestartLabel != null)
-                RestartLabel.text = "重新开始";
-        }
-
-        void OnRestartClicked()
-        {
-            Debug.Log("BRAWL_SMOKE: RESTART_TO_LOBBY_CLICKED");
-            if (BrawlGameManager.Instance != null)
-                BrawlGameManager.Instance.RequestReturnToMenu();
-        }
-
-        public void ResetSessionVisuals()
-        {
-            playedFinalKpiReaction = false;
-            lastMatchSeq = -1;
-            lastHudScene = "";
-            hasDisplayedTurbo = false;
-            lobbyStartConfirmVisible = false;
-            HideLobbyStartConfirm();
-            if (roundResultRoot != null)
-                roundResultRoot.SetActive(false);
-            if (NextRoundButton != null)
-                NextRoundButton.gameObject.SetActive(false);
-            if (RestartButton != null)
-                RestartButton.gameObject.SetActive(false);
-            if (RulesRoot != null)
-                RulesRoot.SetActive(false);
-        }
-
-        void EnsureRestartButton()
-        {
-            if (RestartButton != null && RestartLabel != null)
-            {
-                if (roundResultRoot != null && RestartButton.transform.parent != roundResultRoot.transform)
-                    RestartButton.transform.SetParent(roundResultRoot.transform, false);
-                return;
-            }
-
-            Transform existing = transform.Find("Restart");
-            if (existing == null && roundResultRoot != null)
-                existing = roundResultRoot.transform.Find("Restart");
-            if (existing != null)
-            {
-                RestartButton = existing.GetComponent<Button>();
-                RestartLabel = existing.Find("Label")?.GetComponent<Text>();
-                if (RestartButton != null && RestartLabel != null)
-                {
-                    RestartButton.onClick.RemoveListener(OnRestartClicked);
-                    RestartButton.onClick.AddListener(OnRestartClicked);
-                    RestartButton.gameObject.SetActive(false);
-                    return;
-                }
-            }
-
-            Font fallbackFont = TimerText != null && TimerText.font != null
-                ? TimerText.font
-                : Resources.GetBuiltinResource<Font>("Arial.ttf");
-            Transform parent = roundResultRoot != null ? roundResultRoot.transform : transform;
-            GameObject buttonObject = new GameObject("Restart", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
-            RectTransform buttonRect = buttonObject.GetComponent<RectTransform>();
-            buttonRect.SetParent(parent, false);
-            SetHudRect(buttonRect, new Vector2(0.38f, 0.075f), new Vector2(0.62f, 0.155f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
-            Image image = buttonObject.GetComponent<Image>();
-            image.color = new Color(0.88f, 0.63f, 0.03f, 1f);
-            image.raycastTarget = true;
-            EnsureGraphicOutline(image, new Color(0.58f, 0.52f, 0.38f, 1f), 2f);
-            RestartButton = buttonObject.GetComponent<Button>();
-            RestartButton.onClick.AddListener(OnRestartClicked);
-
-            GameObject labelObject = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
-            RectTransform labelRect = labelObject.GetComponent<RectTransform>();
-            labelRect.SetParent(buttonRect, false);
-            labelRect.anchorMin = Vector2.zero;
-            labelRect.anchorMax = Vector2.one;
-            labelRect.offsetMin = Vector2.zero;
-            labelRect.offsetMax = Vector2.zero;
-            RestartLabel = labelObject.GetComponent<Text>();
-            RestartLabel.font = fallbackFont;
-            RestartLabel.fontSize = 28;
-            RestartLabel.fontStyle = FontStyle.Bold;
-            RestartLabel.alignment = TextAnchor.MiddleCenter;
-            RestartLabel.color = new Color(0.04f, 0.04f, 0.035f, 1f);
-            RestartLabel.raycastTarget = false;
-            RestartLabel.text = "重新开始";
-            buttonObject.SetActive(false);
-        }
-
         void HideDebugTimerButton()
         {
             Transform existing = transform.Find("DebugTimer");
             if (existing != null)
                 existing.gameObject.SetActive(false);
+
+            Transform restart = transform.Find("Restart");
+            if (restart == null && roundResultRoot != null)
+                restart = roundResultRoot.transform.Find("Restart");
+            if (restart != null)
+                restart.gameObject.SetActive(false);
         }
 
         void EnsureNextRoundButton()
@@ -1324,16 +1223,28 @@ namespace Brawl
 
         void BindLobbyButton(BrawlGameManager gm)
         {
-            bool show = gm != null && gm.HudShowLobbyActions && BrawlLevelCatalog.ActiveSceneIsLauncher();
-            bool isHost = show && gm.HudIsHost && NetworkClient.isConnected;
+            if (LobbyButton == null || LobbyStartButton == null || LobbyReadyRoot == null)
+            {
+                EnsureLobbyButton();
+                EnsureLobbyReadyPanel();
+            }
+
+            bool onLauncher = BrawlLevelCatalog.ActiveSceneIsLauncher();
+            bool host = NetworkServer.active;
+            bool joined = NetworkClient.active && (NetworkClient.isConnected || NetworkClient.localPlayer != null);
+            bool show = onLauncher && (host || joined);
+            bool isHost = show && host;
             if (LobbyReadyRoot != null)
+            {
                 LobbyReadyRoot.SetActive(show);
+                if (show)
+                    LobbyReadyRoot.transform.SetAsLastSibling();
+            }
             if (!show)
                 HideLobbyStartConfirm();
 
             SetLobbyButtonActive(LobbyButton, show && !isHost);
             SetLobbyButtonActive(LobbyStartButton, show && isHost);
-            HideLooseLobbyButtons(show, isHost);
             if (!show) return;
 
             if (isHost)
@@ -1351,7 +1262,7 @@ namespace Brawl
             }
             else
             {
-                bool ready = gm.HudLocalIsReady();
+                bool ready = gm != null && gm.HudLocalIsReady();
                 if (LobbyLabel != null)
                     LobbyLabel.text = ready ? "取消准备" : "准备  READY";
                 Image readyImage = LobbyButton != null ? LobbyButton.GetComponent<Image>() : null;
@@ -1369,8 +1280,8 @@ namespace Brawl
             bool showTransient = Time.unscaledTime < lobbyTransientStatusUntil && !string.IsNullOrEmpty(lobbyTransientStatus);
             if (LobbyReadyStatus != null)
             {
-                string readyLine = string.IsNullOrEmpty(gm.HudLobbyReadyLine) ? "已准备 0/0" : gm.HudLobbyReadyLine;
-                string hint = gm.HudLobbyAllReady
+                string readyLine = gm == null || string.IsNullOrEmpty(gm.HudLobbyReadyLine) ? "已准备 0/0" : gm.HudLobbyReadyLine;
+                string hint = gm != null && gm.HudLobbyAllReady
                     ? "全员已准备，等待房主开始"
                     : "还有人未准备，房主可选择直接开始";
                 LobbyReadyStatus.text = showTransient ? lobbyTransientStatus : readyLine + "    " + hint;
@@ -1518,6 +1429,18 @@ namespace Brawl
             }
 
             Transform existing = transform.Find(name);
+            if (existing == null)
+            {
+                Transform[] children = GetComponentsInChildren<Transform>(true);
+                for (int i = 0; i < children.Length; i++)
+                {
+                    if (children[i] != null && children[i].name == name)
+                    {
+                        existing = children[i];
+                        break;
+                    }
+                }
+            }
             if (existing != null)
             {
                 button = existing.GetComponent<Button>();

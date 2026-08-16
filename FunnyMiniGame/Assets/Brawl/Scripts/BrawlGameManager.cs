@@ -140,7 +140,7 @@ namespace Brawl
 
         public bool HudShowLobbyActions =>
             BrawlLevelCatalog.ActiveSceneIsLauncher()
-            && ServerCanAcceptLobbyReady();
+            && (NetworkServer.active || NetworkClient.active);
 
         public bool ServerCanAcceptLobbyReady()
         {
@@ -335,70 +335,11 @@ namespace Brawl
 
         public override void OnStartClient()
         {
+            if (Instance != null && Instance != this && Instance.netId == 0)
+                Instance.enabled = false;
+            Instance = this;
             base.OnStartClient();
             ApplyAirWall();
-        }
-
-        public override void OnStopClient()
-        {
-            ResetMatchStateForMenu();
-            base.OnStopClient();
-        }
-
-        public override void OnStopServer()
-        {
-            ResetMatchStateForMenu();
-            base.OnStopServer();
-        }
-
-        public void RequestReturnToMenu()
-        {
-            ResetMatchStateForMenu();
-            NetworkManager manager = NetworkManager.singleton;
-            if (manager != null)
-            {
-                if (NetworkServer.active)
-                    manager.StopHost();
-                else if (NetworkClient.active)
-                    manager.StopClient();
-                else if (!BrawlLevelCatalog.ActiveSceneIsLauncher())
-                    SceneManager.LoadScene(BrawlLevelCatalog.LauncherScene);
-                return;
-            }
-
-            if (!BrawlLevelCatalog.ActiveSceneIsLauncher())
-                SceneManager.LoadScene(BrawlLevelCatalog.LauncherScene);
-        }
-
-        public void ResetMatchStateForMenu()
-        {
-            changingScene = false;
-            pendingLevelName = "";
-            levelSessionStarted = false;
-            stoppingSession = false;
-            state = EState.Waiting;
-            currentLevelName = BrawlLevelCatalog.LauncherScene;
-            playMode = BrawlPlayMode.HoldKpi;
-            statusText = "";
-            rankText = "";
-            kpiBoardText = "";
-            rulesTitle = "本局规则";
-            rulesBody = "";
-            airWallActive = false;
-            matchSeq = 0;
-            elimRoundIndex = 0;
-            elimIntermission = false;
-            elimRoundDuration = 0f;
-            nextBotIndex = 0;
-            nextScoreTime = 0;
-            players.Clear();
-            ServerClearRoundRuntime("");
-            BrawlAirWall.SetAllActive(false);
-            if (Record != null)
-                Record.BeginNewRun();
-            BrawlMatchHud hud = FindObjectOfType<BrawlMatchHud>();
-            if (hud != null)
-                hud.ResetSessionVisuals();
         }
 
         void OnDestroy()
@@ -995,7 +936,8 @@ namespace Brawl
 
         public void RequestLobbyReadyToggle()
         {
-            if (!HudShowLobbyActions || HudIsHost) return;
+            if (HudIsHost) return;
+            if (!BrawlLevelCatalog.ActiveSceneIsLauncher() && !NetworkClient.active) return;
             NetFAnnequinController local = LocalLobbyPlayer();
             if (local == null) return;
             local.CmdSetLobbyReady(!local.LobbyReady);

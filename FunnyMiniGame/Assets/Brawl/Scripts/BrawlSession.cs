@@ -70,6 +70,9 @@ namespace Brawl
         void LateUpdate()
         {
             AdoptRuntimeHelpers();
+            BrawlMatchHud hud = GetComponentInChildren<BrawlMatchHud>(true);
+            if (hud != null && !hud.gameObject.activeSelf)
+                hud.gameObject.SetActive(true);
         }
 
         void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -151,19 +154,6 @@ namespace Brawl
             if (actor == null) return;
             AdoptTransform(actor.transform);
             AdoptRagdollRuntime(actor);
-        }
-
-        public static void ClearPersistentActors()
-        {
-            if (Instance == null) return;
-            Transform root = Instance.transform.Find("PersistentActors");
-            if (root == null) return;
-            for (int i = root.childCount - 1; i >= 0; i--)
-            {
-                Transform child = root.GetChild(i);
-                if (child != null)
-                    Object.Destroy(child.gameObject);
-            }
         }
 
         public static void AdoptAllPlayers()
