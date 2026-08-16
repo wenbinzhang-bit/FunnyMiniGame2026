@@ -7,9 +7,9 @@ using UnityEngine.SceneManagement;
 namespace Brawl
 {
     /// <summary>
-    /// 跨关卡对局：Launcher 大厅由房主点开始进入 MiniGame_00 → MiniGame_01，共 2 关；
+    /// 跨关卡对局：Launcher 大厅由房主点开始进入 MiniGame_00 → MiniGame_01 → MiniGame_02，共 3 关；
     /// 每关先显示规则，再空气墙等待其他玩家进场景，倒计时结束才开打。
-    /// 玩法由场景里的 BrawlLevelInfo.PlayMode 决定，第 2 关结束后汇总整场 KPI。
+    /// 玩法由场景里的 BrawlLevelInfo.PlayMode 决定，第 3 关结束后汇总整场 KPI。
     /// </summary>
     public class BrawlGameManager : NetworkBehaviour
     {
@@ -92,13 +92,9 @@ namespace Brawl
         public float ActiveBuckDumpSeconds => Mathf.Max(1f, buckDumpSeconds);
 
         /// <summary>
-        /// 仅第二关甩锅：最后一段倒计时停止抱分，只留终局背锅。第一关抢电脑不会进入此相位。
+        /// 旧热锅相位已停用。第三关改为三轮淘汰甩锅。
         /// </summary>
-        public bool IsPassTheBuckDumpPhase =>
-            IsPassTheBuck
-            && state == EState.Playing
-            && !changingScene
-            && HudRemainingSeconds <= ActiveBuckDumpSeconds;
+        public bool IsPassTheBuckDumpPhase => false;
 
         public static bool PassTheBuckActive
         {
@@ -107,7 +103,7 @@ namespace Brawl
                 if (Instance != null && Instance.IsPassTheBuck)
                     return true;
 
-                // 模式还没从服务器同步过来时，按关卡默认玩法，避免第二关左键甩不出去。
+                // 模式还没从服务器同步过来时，按关卡默认玩法，避免第三关右键甩不出去。
                 return BrawlLevelCatalog.DefaultPlayMode(BrawlLevelCatalog.ActiveSceneName())
                     == BrawlPlayMode.PassTheBuck;
             }
@@ -190,6 +186,12 @@ namespace Brawl
         [SyncVar] float catchStunSeconds = 1f;
         [SyncVar] float throwSpeed = 14f;
         [SyncVar] float buckDumpSeconds = 30f;
+        [SyncVar] int elimRoundIndex;
+        [SyncVar] bool elimIntermission;
+
+        static readonly float[] ElimRoundSeconds = { 60f, 30f, 15f };
+        const float ElimIntermissionSeconds = 2.5f;
+        const int ElimRoundScoreStep = 33;
 
         class PlayerEntry
         {
@@ -454,6 +456,7 @@ namespace Brawl
                 {
                     BrawlLobbyReady.Clear(fan);
                     fan.ServerResetTurbo();
+                    fan.ServerClearElimination();
                     fan.ServerForceDropComputer(force: true);
                 }
             }
@@ -943,7 +946,7 @@ namespace Brawl
                 if (p?.motor != null)
                     p.motor.InputActive = false;
             }
-            statusText = "2 关全部结束，这是整场 KPI 汇总";
+            statusText = "3 关全部结束，这是整场 KPI 汇总";
             Debug.Log("BRAWL_SMOKE: FINAL_KPI\n" + kpiBoardText);
         }
 
@@ -971,7 +974,6 @@ namespace Brawl
             airWallActive = false;
             BrawlAirWall.SetAllActive(false);
             ServerSetAirWall(false);
-            roundEndsAt = NetworkTime.time + Mathf.Max(5f, RoundDurationSeconds);
             nextScoreTime = NetworkTime.time + HoldScoreInterval;
             Debug.Log($"BRAWL_SMOKE: ROUND_STARTED players={players.Count} duration={RoundDurationSeconds}");
 
@@ -984,12 +986,22 @@ namespace Brawl
                 p.motor.Score = 0;
                 p.motor.InputActive = true;
                 if (p.motor is NetFAnnequinController fan)
+                {
+                    fan.ServerClearElimination();
                     fan.ServerResetTurbo();
+                }
                 if (p.motor.Transform != null)
                     p.motor.SpawnPosition = p.motor.Transform.position;
             }
 
             ServerResetAllComputers();
+            if (IsPassTheBuck)
+            {
+                ServerBeginElimRound(0);
+                return;
+            }
+
+            roundEndsAt = NetworkTime.time + Mathf.Max(5f, RoundDurationSeconds);
             rankText = RankLine();
             statusText = FormatPlayingStatus();
         }
@@ -997,6 +1009,21 @@ namespace Brawl
         [Server]
         void ServerUpdatePlaying()
         {
+            if (IsPassTheBuck)
+            {
+                ServerUpdateElimination();
+                foreach (var p in players)
+                {
+                    if (p?.motor != null && !p.motor.IsDead)
+                        ServerRescueIfNeeded(p);
+                }
+
+                rankText = RankLine();
+                if (!elimIntermission)
+                    statusText = FormatPlayingStatus();
+                return;
+            }
+
             float remaining = (float)(roundEndsAt - NetworkTime.time);
             if (remaining <= 0f)
             {
@@ -1008,15 +1035,179 @@ namespace Brawl
             if (ServerTryFinishByScoreCap())
                 return;
 
-            if (IsPassTheBuckDumpPhase)
-                ServerEnsureDumpPhaseHasHolder();
-
             foreach (var p in players)
                 ServerRescueIfNeeded(p);
 
             ServerRescueLooseComputers();
             rankText = RankLine();
             statusText = FormatPlayingStatus();
+        }
+
+        [Server]
+        void ServerBeginElimRound(int index)
+        {
+            elimRoundIndex = Mathf.Clamp(index, 0, ElimRoundSeconds.Length - 1);
+            elimIntermission = false;
+            float duration = ElimRoundSeconds[elimRoundIndex];
+            roundEndsAt = NetworkTime.time + duration;
+            ServerDropAllComputers();
+            ServerAssignRandomBuck();
+            foreach (var p in players)
+            {
+                if (p?.motor == null || p.motor.IsDead) continue;
+                p.motor.InputActive = true;
+            }
+
+            rankText = RankLine();
+            statusText = FormatPlayingStatus();
+            Debug.Log($"BRAWL_SMOKE: ELIM_ROUND {elimRoundIndex + 1} duration={duration}");
+        }
+
+        [Server]
+        void ServerUpdateElimination()
+        {
+            if (elimIntermission)
+            {
+                if (NetworkTime.time >= roundEndsAt)
+                    ServerBeginElimRound(elimRoundIndex + 1);
+                return;
+            }
+
+            ServerEnsureElimHasHolder();
+            if (NetworkTime.time < roundEndsAt) return;
+            ServerEliminateCurrentHolder();
+        }
+
+        [Server]
+        void ServerEnsureElimHasHolder()
+        {
+            foreach (KpiComputerObjective computer in AllComputers())
+            {
+                if (computer == null || computer.IsHeld) continue;
+                ServerAssignRandomBuck();
+                return;
+            }
+        }
+
+        [Server]
+        void ServerAssignRandomBuck()
+        {
+            var living = new List<NetFAnnequinController>();
+            foreach (var p in players)
+            {
+                if (p?.motor is NetFAnnequinController fan && !fan.IsDead && !fan.IsKnockedDown)
+                    living.Add(fan);
+            }
+
+            if (living.Count == 0) return;
+            NetFAnnequinController chosen = living[Random.Range(0, living.Count)];
+            foreach (KpiComputerObjective computer in AllComputers())
+            {
+                if (computer == null) continue;
+                computer.ServerTransferTo(null, chosen, false);
+                Debug.Log($"BRAWL_SMOKE: ELIM_ASSIGN {PlayerLabel(chosen.NetId)}");
+                return;
+            }
+        }
+
+        [Server]
+        void ServerEliminateCurrentHolder()
+        {
+            NetFAnnequinController holder = null;
+            foreach (KpiComputerObjective computer in AllComputers())
+            {
+                if (computer == null || !computer.IsHeld) continue;
+                holder = FindPlayerByMotorNetId(computer.HolderNetId);
+                break;
+            }
+
+            if (holder == null)
+            {
+                foreach (var p in players)
+                {
+                    if (p?.motor is NetFAnnequinController fan && fan.IsHoldingComputer && !fan.IsDead)
+                    {
+                        holder = fan;
+                        break;
+                    }
+                }
+            }
+
+            string outName = "无人";
+            if (holder != null)
+            {
+                outName = PlayerLabel(holder.NetId);
+                holder.Score = elimRoundIndex * ElimRoundScoreStep;
+                holder.ServerEliminate(SpectatorIsland);
+            }
+
+            ServerDropAllComputers();
+            int living = CountLivingPlayers();
+            bool moreRounds = elimRoundIndex + 1 < ElimRoundSeconds.Length && living >= 2;
+            if (!moreRounds)
+            {
+                ServerAwardSurvivorScores();
+                uint winnerId = FirstLivingNetId();
+                ServerFinishRound(false, winnerId);
+                string action = HudHasNextLevel ? "下一关" : "查看总成绩";
+                statusText = $"{outName} 被淘汰！甩锅结束  {DescribeWinner()}  |  点击「{action}」继续，否则 {ResolveContinueSeconds():0} 秒后回到等待";
+                return;
+            }
+
+            elimIntermission = true;
+            float nextDuration = ElimRoundSeconds[elimRoundIndex + 1];
+            roundEndsAt = NetworkTime.time + ElimIntermissionSeconds;
+            statusText = $"{outName} 被淘汰！下一轮 {nextDuration:0} 秒";
+            Debug.Log($"BRAWL_SMOKE: ELIMINATED {outName} next={nextDuration}");
+        }
+
+        [Server]
+        void ServerAwardSurvivorScores()
+        {
+            int cap = Mathf.Max(1, HudScoreMax);
+            foreach (var p in players)
+            {
+                if (p?.motor == null || p.motor.IsDead) continue;
+                p.motor.Score = cap;
+            }
+        }
+
+        [Server]
+        int CountLivingPlayers()
+        {
+            int count = 0;
+            foreach (var p in players)
+            {
+                if (p?.motor != null && !p.motor.IsDead)
+                    count++;
+            }
+
+            return count;
+        }
+
+        [Server]
+        uint FirstLivingNetId()
+        {
+            foreach (var p in players)
+            {
+                if (p?.motor != null && !p.motor.IsDead)
+                    return p.motor.NetId;
+            }
+
+            return 0;
+        }
+
+        [Server]
+        NetFAnnequinController FindPlayerByMotorNetId(uint netId)
+        {
+            if (netId == 0u) return null;
+            foreach (var p in players)
+            {
+                if (p?.motor is NetFAnnequinController fan && fan.NetId == netId)
+                    return fan;
+            }
+
+            return FindSpawnedPlayer(netId) as NetFAnnequinController;
         }
 
         [Server]
@@ -1049,8 +1240,6 @@ namespace Brawl
                 p.motor.InputActive = false;
 
             string penaltyLine = "";
-            if (!reachedScoreCap && playMode == BrawlPlayMode.PassTheBuck)
-                penaltyLine = ServerApplyBuckPenalty();
 
             ServerDropAllComputers();
             ServerRecordLevelScores();
@@ -1284,9 +1473,8 @@ namespace Brawl
             string holders = HolderLine();
             if (playMode == BrawlPlayMode.PassTheBuck)
             {
-                if (remaining <= ActiveBuckDumpSeconds)
-                    return $"剩余 {FormatTime(remaining)} | {holders} | 马上背锅，只能砸给别人";
-                return $"剩余 {FormatTime(remaining)} | {holders} | 抱着加分，最后{ActiveBuckDumpSeconds:0}秒停分且不能放下，背锅-{ActiveBuckPenalty}";
+                int round = Mathf.Clamp(elimRoundIndex, 0, ElimRoundSeconds.Length - 1) + 1;
+                return $"第{round}/{ElimRoundSeconds.Length}轮 | 剩余 {FormatTime(remaining)} | {holders} | 右键点人甩锅，超时淘汰";
             }
 
             return $"剩余 {FormatTime(remaining)} | {holders} | 持电脑每{HoldScoreInterval:0.##}秒+{HoldScorePoints}分";
@@ -1489,6 +1677,8 @@ namespace Brawl
             rulesBody = info != null && !string.IsNullOrEmpty(info.Rules)
                 ? info.Rules
                 : DefaultRulesText();
+            if (playMode == BrawlPlayMode.PassTheBuck && !rulesBody.Contains("共三轮"))
+                rulesBody = BrawlLevelInfo.PassTheBuckRules;
         }
 
         string DefaultRulesText()

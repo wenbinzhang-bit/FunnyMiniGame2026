@@ -76,6 +76,8 @@ namespace Brawl
         public RawImage RulesArtwork;
         public Button DebugTimerButton;
         public Text DebugTimerLabel;
+        public RectTransform PassCrosshairRoot;
+        public Image[] PassCrosshairMarks;
 
         [Header("Colors")]
         public Color IdleFrameColor = new Color(0.08f, 0.08f, 0.08f, 0.72f);
@@ -142,6 +144,7 @@ namespace Brawl
             EnsureLobbyStartConfirm();
             EnsureRulesPanel();
             EnsureDebugTimerButton();
+            EnsurePassCrosshair();
             ApplyHudVisualStyle();
         }
 
@@ -296,7 +299,7 @@ namespace Brawl
                         ? "空气墙等待中，结束后正式开始"
                         : TrimStatus(gm.HudStatusText);
                 else if (gm != null && gm.HudIsFinalKpi)
-                    StatusText.text = "2 关全部结束，这是整场 KPI 汇总";
+                    StatusText.text = "3 关全部结束，这是整场 KPI 汇总";
                 else if (gm != null && gm.HudIsRoundEnd)
                     StatusText.text = gm.HudContinueRequested
                         ? (gm.HudHasNextLevel ? "已确认下一关" : "已确认查看总成绩")
@@ -318,6 +321,7 @@ namespace Brawl
             BindRulesPanel(gm);
             BindDebugTimerButton(gm);
             BindCursorHint();
+            BindPassCrosshair(gm);
             if (NextRoundButton != null && NextRoundButton.gameObject.activeSelf)
                 NextRoundButton.transform.SetAsLastSibling();
         }
@@ -331,7 +335,12 @@ namespace Brawl
 
             int score = player != null ? player.Score : 0;
             if (slot.Name != null)
-                slot.Name.text = player != null ? BrawlHudNames.Label(player.NetId, hudPlayers) : $"Player {index + 1}";
+            {
+                string label = player != null ? BrawlHudNames.Label(player.NetId, hudPlayers) : $"Player {index + 1}";
+                if (player != null && player.IsDead)
+                    label += " 淘汰";
+                slot.Name.text = label;
+            }
             if (slot.Score != null) slot.Score.text = $"{score}/{scoreMax}";
             if (slot.BarFill != null)
             {
@@ -347,7 +356,10 @@ namespace Brawl
             if (slot.Frame != null)
             {
                 bool holding = player is NetFAnnequinController fan && fan.IsHoldingComputer;
-                slot.Frame.color = holding ? HoldingFrameColor : IdleFrameColor;
+                bool eliminated = player != null && player.IsDead;
+                slot.Frame.color = eliminated
+                    ? new Color(0.25f, 0.25f, 0.25f, 0.85f)
+                    : holding ? HoldingFrameColor : IdleFrameColor;
             }
 
             if (slot.Avatar != null)
@@ -1693,6 +1705,102 @@ namespace Brawl
             Transform current = child;
             while (current != null && current.name != name) current = current.parent;
             return current;
+        }
+
+        void BindPassCrosshair(BrawlGameManager gm)
+        {
+            EnsurePassCrosshair();
+            if (PassCrosshairRoot == null) return;
+
+            NetFAnnequinController local = FindLocalPlayer();
+            bool show = gm != null
+                && gm.HudIsPlaying
+                && gm.IsPassTheBuck
+                && local != null
+                && local.IsHoldingComputer
+                && !local.IsDead
+                && LocalCameraRig.IsCursorCaptured;
+            PassCrosshairRoot.anchorMin = new Vector2(NetFAnnequinController.PassAimViewportX, 0.5f);
+            PassCrosshairRoot.anchorMax = new Vector2(NetFAnnequinController.PassAimViewportX, 0.5f);
+            PassCrosshairRoot.anchoredPosition = Vector2.zero;
+            PassCrosshairRoot.gameObject.SetActive(show);
+            if (!show) return;
+
+            bool locked = local.FindAimedPlayer() != null;
+            Color color = locked
+                ? new Color(1f, 0.86f, 0.35f, 0.78f)
+                : new Color(1f, 1f, 1f, 0.28f);
+            float scale = locked ? 1.08f : 1f;
+            PassCrosshairRoot.localScale = Vector3.one * scale;
+            if (PassCrosshairMarks == null) return;
+            for (int i = 0; i < PassCrosshairMarks.Length; i++)
+            {
+                if (PassCrosshairMarks[i] != null)
+                    PassCrosshairMarks[i].color = color;
+            }
+        }
+
+        NetFAnnequinController FindLocalPlayer()
+        {
+            for (int i = 0; i < hudPlayers.Count; i++)
+            {
+                if (hudPlayers[i] is NetFAnnequinController fan && fan.isLocalPlayer)
+                    return fan;
+            }
+
+            return null;
+        }
+
+        void EnsurePassCrosshair()
+        {
+            if (PassCrosshairRoot != null && PassCrosshairMarks != null && PassCrosshairMarks.Length >= 5)
+                return;
+
+            Transform existing = transform.Find("PassCrosshair");
+            if (existing != null)
+            {
+                PassCrosshairRoot = existing.GetComponent<RectTransform>();
+                PassCrosshairMarks = existing.GetComponentsInChildren<Image>(true);
+                if (PassCrosshairRoot != null)
+                {
+                    PassCrosshairRoot.gameObject.SetActive(false);
+                    return;
+                }
+            }
+
+            var rootObject = new GameObject("PassCrosshair", typeof(RectTransform));
+            PassCrosshairRoot = rootObject.GetComponent<RectTransform>();
+            PassCrosshairRoot.SetParent(transform, false);
+            PassCrosshairRoot.anchorMin = new Vector2(NetFAnnequinController.PassAimViewportX, 0.5f);
+            PassCrosshairRoot.anchorMax = new Vector2(NetFAnnequinController.PassAimViewportX, 0.5f);
+            PassCrosshairRoot.pivot = new Vector2(0.5f, 0.5f);
+            PassCrosshairRoot.anchoredPosition = Vector2.zero;
+            PassCrosshairRoot.sizeDelta = new Vector2(36f, 36f);
+            PassCrosshairRoot.SetAsFirstSibling();
+
+            PassCrosshairMarks = new Image[5];
+            PassCrosshairMarks[0] = CreateCrosshairMark(PassCrosshairRoot, "Top", new Vector2(0f, 11f), new Vector2(2f, 10f));
+            PassCrosshairMarks[1] = CreateCrosshairMark(PassCrosshairRoot, "Bottom", new Vector2(0f, -11f), new Vector2(2f, 10f));
+            PassCrosshairMarks[2] = CreateCrosshairMark(PassCrosshairRoot, "Left", new Vector2(-11f, 0f), new Vector2(10f, 2f));
+            PassCrosshairMarks[3] = CreateCrosshairMark(PassCrosshairRoot, "Right", new Vector2(11f, 0f), new Vector2(10f, 2f));
+            PassCrosshairMarks[4] = CreateCrosshairMark(PassCrosshairRoot, "Dot", Vector2.zero, new Vector2(3f, 3f));
+            rootObject.SetActive(false);
+        }
+
+        static Image CreateCrosshairMark(Transform parent, string name, Vector2 position, Vector2 size)
+        {
+            var markObject = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            RectTransform rect = markObject.GetComponent<RectTransform>();
+            rect.SetParent(parent, false);
+            rect.anchorMin = new Vector2(0.5f, 0.5f);
+            rect.anchorMax = new Vector2(0.5f, 0.5f);
+            rect.pivot = new Vector2(0.5f, 0.5f);
+            rect.anchoredPosition = position;
+            rect.sizeDelta = size;
+            Image image = markObject.GetComponent<Image>();
+            image.color = new Color(1f, 1f, 1f, 0.28f);
+            image.raycastTarget = false;
+            return image;
         }
 
         void EnsureCursorHint()

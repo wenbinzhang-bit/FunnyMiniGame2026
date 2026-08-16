@@ -86,6 +86,7 @@ namespace Brawl
         [SyncVar(hook = nameof(OnSyncGrounded))] bool syncGrounded = true;
         [SyncVar(hook = nameof(OnSyncSpeed))] float syncSpeed;
         [SyncVar(hook = nameof(OnSyncHoldingComputer))] bool syncHoldingComputer;
+        [SyncVar] bool syncEliminated;
         [SyncVar] float syncTurboRemaining = 5f;
         [SyncVar] public bool LobbyReady;
 
@@ -95,7 +96,7 @@ namespace Brawl
         public uint NetId => netId;
         public Transform Transform => this != null ? transform : null;
         public PlayerAttributes Attributes => attributes;
-        public bool IsDead => false;
+        public bool IsDead => syncEliminated;
         public bool WantsToMove => pendingMove.sqrMagnitude > 0.0001f;
         public bool IsMoveAuthority => Mover != null && Mover.Rigb != null && !Mover.Rigb.isKinematic && (isServer || isLocalPlayer);
         bool UsesServerPoseSync => poseSync != null && poseSync.enabled;
@@ -103,13 +104,17 @@ namespace Brawl
         public bool IsHoldingPlayer => heldPlayer != null;
         public bool IsHoldingComputer => syncHoldingComputer || heldComputer != null;
         public bool IsCatchStunned => isServer && Time.time < catchStunUntil;
-        public bool CanThrowComputer =>
+        public bool CanThrowComputer => false;
+        public const float PassAimViewportX = 0.58f;
+
+        public bool CanPassBuck =>
             BrawlGameManager.PassTheBuckActive
             && IsHoldingComputer
             && !IsCatchStunned
             && !IsKnockedDown
-            && !IsGrabbed;
-        public bool CanDropComputer => !BrawlGameManager.PassTheBuckDumpActive;
+            && !IsGrabbed
+            && !IsDead;
+        public bool CanDropComputer => !BrawlGameManager.PassTheBuckActive;
         public bool IsGrabbed => grabber != null;
         public bool IsKnockedDown { get; private set; }
         public Vector3 KnockbackVelocity { get; private set; }
@@ -213,6 +218,7 @@ namespace Brawl
             mouseActions.OnShortPressAttack = RequestPunch;
             mouseActions.OnLongPressGrab = RequestComputerPickup;
             mouseActions.OnRightClickRelease = CmdReleaseHeldObject;
+            mouseActions.OnRightClickDown = RequestPassBuck;
             mouseActions.enabled = false;
 
             if (GetComponent<FAnnequinLocomotionFix>() == null)
@@ -325,6 +331,14 @@ namespace Brawl
 
         void ApplyComputerHoldingPose(bool holding)
         {
+            if (BrawlGameManager.PassTheBuckActive)
+            {
+                if (Hero != null) Hero.SetHoldingPose(false);
+                if (Mecanim != null && Mecanim.layerCount > 1)
+                    Mecanim.SetLayerWeight(1, 0f);
+                return;
+            }
+
             if (Hero != null)
             {
                 Hero.SetHoldingPose(holding);
@@ -564,7 +578,59 @@ namespace Brawl
         void RequestComputerPickup()
         {
             if (!InputActive || IsHoldingComputer) return;
+            if (BrawlGameManager.PassTheBuckActive) return;
             CmdCatch(GetLookDir());
+        }
+
+        void RequestPassBuck()
+        {
+            if (!InputActive || !CanPassBuck || Time.time < localAttackInputLockedUntil) return;
+            NetFAnnequinController target = FindAimedPlayer();
+            if (target == null) return;
+            CmdPassBuck(target.netId);
+        }
+
+        public NetFAnnequinController FindAimedPlayer(float maxDistance = 28f)
+        {
+            Camera cam = Camera.main;
+            if (cam == null) return null;
+
+            NetFAnnequinController best = null;
+            float bestScore = float.MaxValue;
+            foreach (NetFAnnequinController other in FindObjectsOfType<NetFAnnequinController>())
+            {
+                if (other == null || other == this || other.IsDead) continue;
+                Vector3 aimPoint = other.GetPassAimPoint();
+                Vector3 viewport = cam.WorldToViewportPoint(aimPoint);
+                if (viewport.z < 0.35f) continue;
+
+                float dx = viewport.x - PassAimViewportX;
+                float dy = viewport.y - 0.5f;
+                float screenDist = Mathf.Sqrt(dx * dx + dy * dy);
+                if (screenDist > 0.16f) continue;
+
+                float worldDist = Vector3.Distance(cam.transform.position, aimPoint);
+                if (worldDist > maxDistance) continue;
+
+                float score = screenDist * 10f + worldDist * 0.015f;
+                if (score >= bestScore) continue;
+                bestScore = score;
+                best = other;
+            }
+
+            return best;
+        }
+
+        public Vector3 GetPassAimPoint()
+        {
+            if (Mecanim != null && Mecanim.isHuman)
+            {
+                Transform chest = Mecanim.GetBoneTransform(HumanBodyBones.Chest);
+                if (chest == null) chest = Mecanim.GetBoneTransform(HumanBodyBones.Spine);
+                if (chest != null) return chest.position;
+            }
+
+            return transform.position + Vector3.up * 1.15f;
         }
 
         bool IsAttackMovementLocked()
@@ -728,9 +794,16 @@ namespace Brawl
             ServerStartComputerThrow(lookDir);
         }
 
+        public void ServerBotPassBuck(NetFAnnequinController target)
+        {
+            if (!isServer || !CanPassBuck || target == null || target == this || target.IsDead) return;
+            ServerPassBuck(target);
+        }
+
         public bool ServerBotTryPickup()
         {
             if (!isServer || !InputActive) return false;
+            if (BrawlGameManager.PassTheBuckActive) return false;
             if (!ServerTryPickupComputer()) return false;
             ServerFinishComputerPickupImmediate();
             return true;
@@ -866,6 +939,40 @@ namespace Brawl
         {
             if (BrawlGameManager.Instance != null)
                 BrawlGameManager.Instance.ServerDebugSetRemainingSeconds(seconds);
+        }
+
+        [Command]
+        void CmdPassBuck(uint targetNetId)
+        {
+            try
+            {
+                if (!CanPassBuck) return;
+                NetFAnnequinController target = null;
+                foreach (NetFAnnequinController other in FindObjectsOfType<NetFAnnequinController>())
+                {
+                    if (other != null && other.netId == targetNetId)
+                    {
+                        target = other;
+                        break;
+                    }
+                }
+
+                ServerPassBuck(target);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"CmdPassBuck: {e.Message}");
+            }
+        }
+
+        [Server]
+        void ServerPassBuck(NetFAnnequinController target)
+        {
+            if (!CanPassBuck || target == null || target == this || target.IsDead) return;
+            if (target.IsGrabbed || target.IsHoldingComputer) return;
+            KpiComputerObjective computer = heldComputer;
+            if (computer == null) return;
+            computer.ServerTransferTo(this, target, true);
         }
 
         [Command]
@@ -1980,6 +2087,12 @@ namespace Brawl
 
         public void GetComputerHoldPose(out Vector3 holdPosition, out Quaternion holdRotation)
         {
+            if (BrawlGameManager.PassTheBuckActive)
+            {
+                GetComputerBackPose(out holdPosition, out holdRotation);
+                return;
+            }
+
             Transform leftHand = null;
             Transform rightHand = Hero != null ? Hero.Hand : null;
             if (Mecanim != null && Mecanim.isHuman)
@@ -2012,6 +2125,58 @@ namespace Brawl
                 * Quaternion.Euler(ComputerHoldEuler);
         }
 
+        void GetComputerBackPose(out Vector3 holdPosition, out Quaternion holdRotation)
+        {
+            Transform spine = null;
+            if (Mecanim != null && Mecanim.isHuman)
+            {
+                spine = Mecanim.GetBoneTransform(HumanBodyBones.UpperChest);
+                if (spine == null) spine = Mecanim.GetBoneTransform(HumanBodyBones.Chest);
+                if (spine == null) spine = Mecanim.GetBoneTransform(HumanBodyBones.Spine);
+            }
+
+            Vector3 origin = spine != null ? spine.position : transform.position + Vector3.up * 1.15f;
+            holdPosition = origin - transform.forward * 0.28f;
+            holdRotation = Quaternion.LookRotation(-transform.forward, Vector3.up)
+                * Quaternion.Euler(ComputerHoldEuler);
+        }
+
+        [Server]
+        public void ServerDetachComputer()
+        {
+            if (computerPickupRoutine != null)
+            {
+                StopCoroutine(computerPickupRoutine);
+                computerPickupRoutine = null;
+            }
+
+            heldComputer = null;
+            syncHoldingComputer = false;
+            catchStunUntil = -1f;
+            FinishComputerPickupAnimation();
+            ApplyComputerHoldingPose(false);
+            RpcCancelComputerPickup();
+        }
+
+        [Server]
+        public void ServerEliminate(Vector3 spectatorIsland)
+        {
+            if (syncEliminated) return;
+            ServerForceDropComputer(force: true);
+            syncEliminated = true;
+            InputActive = false;
+            pendingMove = Vector3.zero;
+            ServerForceStand();
+            Vector3 dest = spectatorIsland + new Vector3(Random.Range(-2f, 2f), 1.2f, Random.Range(-2f, 2f));
+            ServerTeleport(dest);
+        }
+
+        [Server]
+        public void ServerClearElimination()
+        {
+            syncEliminated = false;
+        }
+
         [Server]
         public void ServerForceDropComputer(Vector3 extraVelocity = default, bool force = false)
         {
@@ -2023,7 +2188,8 @@ namespace Brawl
         [Server]
         public void ServerForceReceiveComputer(KpiComputerObjective computer, bool applyCatchStun = true)
         {
-            if (computer == null || IsDead || IsKnockedDown || IsGrabbed) return;
+            if (computer == null || IsDead || IsGrabbed) return;
+            if (IsKnockedDown && !BrawlGameManager.PassTheBuckActive) return;
 
             if (computerPickupRoutine != null)
             {

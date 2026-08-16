@@ -28,15 +28,13 @@ namespace Brawl
             "开局有空气墙，倒计时结束后撤墙，正式开打。";
 
         public const string PassTheBuckRules =
-            "电脑还是 KPI：抱着持续加分，但你是全场靶子。\n" +
-            "撑不住就左键甩锅，砸中对方会强制接住并硬直约 1 秒。\n" +
-            "松开右键是轻轻放下，不会砸人。\n" +
-            "最后 30 秒停止加分，只留背锅。没人拿着时，锅会砸给离得最近的人。\n" +
-            "这 30 秒里不能放下电脑，被打飞、掉下去也不会掉，只能砸中其他玩家才能把锅交出去。\n" +
-            "时间到还拿着、或离落地电脑最近的人扣分。\n" +
-            "先到 99 分直接赢，不扣背锅分。\n\n" +
+            "开局随机一人背上锅。\n" +
+            "背锅的人用右键对准其他玩家，把锅甩给他。\n" +
+            "时间到还背着锅的人被淘汰。\n" +
+            "共三轮：60 秒、30 秒、15 秒，每轮淘汰一人。\n" +
+            "按存活轮次计分，三轮结束后统计本关 KPI。\n\n" +
             "WASD 移动　　空格 跳跃　　Shift 加速\n" +
-            "左键 出拳 / 抱着时甩锅　　右键 抱起 / 松开放下\n" +
+            "左键 出拳　　右键 对准玩家甩锅\n" +
             "Esc 释放鼠标　　Alt 重新捕获鼠标";
 
         public BrawlPlayMode PlayMode = BrawlPlayMode.HoldKpi;
@@ -85,7 +83,7 @@ namespace Brawl
             {
                 if (string.IsNullOrEmpty(Title) || Title == "本局规则" || Title == HoldKpiTitle)
                     Title = PassTheBuckTitle;
-                if (string.IsNullOrEmpty(Rules) || Rules == HoldKpiRules || !Rules.Contains("最后 30 秒"))
+                if (string.IsNullOrEmpty(Rules) || Rules == HoldKpiRules || !Rules.Contains("共三轮"))
                     Rules = PassTheBuckRules;
                 return;
             }

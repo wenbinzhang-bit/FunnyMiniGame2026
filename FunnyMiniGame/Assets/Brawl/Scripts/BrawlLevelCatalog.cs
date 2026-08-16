@@ -7,13 +7,13 @@ namespace Brawl
 {
     /// <summary>
     /// 关卡表：Launcher 是大厅。
-    /// 整场只打 2 关：第1关 MiniGame_00 抢电脑，第2关 MiniGame_01 甩锅，结束后汇总 KPI。
+    /// 整场打 3 关：第1、2关 MiniGame_00/01 抢电脑，第3关 MiniGame_02 甩锅，结束后汇总 KPI。
     /// </summary>
     public static class BrawlLevelCatalog
     {
         public const string LauncherScene = "Launcher";
         public const string LevelNamePrefix = "MiniGame_";
-        public const int MaxLevelCount = 2;
+        public const int MaxLevelCount = 3;
         static readonly Regex LevelName = new Regex(@"^MiniGame_(\d+)$", RegexOptions.CultureInvariant);
 
         public static string FormatLevelName(int index)
@@ -69,7 +69,7 @@ namespace Brawl
 
         public static BrawlPlayMode DefaultPlayMode(string sceneName)
         {
-            return GetLevelIndex(sceneName) >= 1
+            return GetLevelIndex(sceneName) >= 2
                 ? BrawlPlayMode.PassTheBuck
                 : BrawlPlayMode.HoldKpi;
         }

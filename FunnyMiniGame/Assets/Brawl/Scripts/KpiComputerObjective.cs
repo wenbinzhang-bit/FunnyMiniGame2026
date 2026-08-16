@@ -193,6 +193,21 @@ namespace Brawl
         }
 
         [Server]
+        public bool ServerTransferTo(NetFAnnequinController from, NetFAnnequinController to, bool applyCatchStun)
+        {
+            if (to == null || to.IsDead || to.IsGrabbed) return false;
+            if (from != null)
+                from.ServerDetachComputer();
+
+            serverHolder = to;
+            holderNetId = to.netId;
+            ClearThrownState();
+            SetServerBodyHeld(true);
+            to.ServerForceReceiveComputer(this, applyCatchStun);
+            return true;
+        }
+
+        [Server]
         public bool ServerTryClaim(NetFAnnequinController holder)
         {
             if (holder == null) return false;

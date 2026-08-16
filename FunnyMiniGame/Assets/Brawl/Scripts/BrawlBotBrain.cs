@@ -5,7 +5,7 @@ namespace Brawl
 {
     /// <summary>
     /// 服务端 Bot：抢电脑关抱着就逃；甩锅关靠近就砸，看见飞来的电脑就躲。
-    /// 甩锅关最后 30 秒：低分去抢锅砸最高分，砸中后散开；这期间不能放下，只能砸给别人。
+    /// 甩锅关：背锅后追人右键甩出去；没背锅就躲开持有者。
     /// </summary>
     [DefaultExecutionOrder(50)]
     public sealed class BrawlBotBrain : MonoBehaviour
@@ -105,8 +105,14 @@ namespace Brawl
                 return;
             }
 
-            bool passTheBuck = BrawlGameManager.PassTheBuckActive;
-            bool dumpPhase = passTheBuck && BrawlGameManager.PassTheBuckDumpActive;
+            if (BrawlGameManager.PassTheBuckActive)
+            {
+                ThinkPassTheBuck();
+                return;
+            }
+
+            bool passTheBuck = false;
+            bool dumpPhase = false;
             bool behindLeader = self.Score < CurrentLeaderScore();
             if (self.IsHoldingComputer)
             {
@@ -181,6 +187,65 @@ namespace Brawl
                 MoveSmart(computer.transform.position - self.transform.position);
             else
                 StopMoving();
+        }
+
+        void ThinkPassTheBuck()
+        {
+            if (self.IsHoldingComputer)
+            {
+                if (self.IsCatchStunned)
+                {
+                    StopMoving();
+                    return;
+                }
+
+                NetFAnnequinController target = NearestLivingOther();
+                if (target == null)
+                {
+                    MoveSmart(FleeDir(), true);
+                    return;
+                }
+
+                Vector3 to = Flat(target.transform.position - self.transform.position);
+                self.ServerBotFace(to);
+                if (to.magnitude <= 14f)
+                {
+                    StopMoving();
+                    self.ServerBotPassBuck(target);
+                    return;
+                }
+
+                MoveSmart(to, true);
+                return;
+            }
+
+            NetFAnnequinController holder = NearestHolder();
+            if (holder != null)
+            {
+                Vector3 away = Flat(self.transform.position - holder.transform.position);
+                MoveSmart(away.sqrMagnitude > 0.01f ? away : FleeDir(), true);
+                return;
+            }
+
+            StopMoving();
+        }
+
+        NetFAnnequinController NearestLivingOther()
+        {
+            NetFAnnequinController best = null;
+            float bestDist = float.MaxValue;
+            foreach (NetFAnnequinController other in FindObjectsOfType<NetFAnnequinController>())
+            {
+                if (other == null || other == self || other.IsDead || other.IsKnockedDown) continue;
+                float dist = Flat(other.transform.position - self.transform.position).sqrMagnitude;
+                if (dist < bestDist)
+                {
+                    bestDist = dist;
+                    best = other;
+                }
+            }
+
+            return best;
         }
 
         /// <summary>

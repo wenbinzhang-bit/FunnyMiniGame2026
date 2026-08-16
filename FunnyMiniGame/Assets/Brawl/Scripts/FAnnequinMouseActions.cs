@@ -17,6 +17,7 @@ namespace Brawl
         public System.Action OnShortPressAttack;
         public System.Action OnLongPressGrab;
         public System.Action OnRightClickRelease;
+        public System.Action OnRightClickDown;
 
         public bool IsPickupButtonHeld => pickupButtonHeld;
 
@@ -40,6 +41,7 @@ namespace Brawl
                 pickupFired = false;
                 holdTime = 0f;
                 pickupRetryTime = 0f;
+                OnRightClickDown?.Invoke();
             }
 
             if (!pickupButtonHeld) return;
