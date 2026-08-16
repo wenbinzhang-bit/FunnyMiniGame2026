@@ -16,6 +16,7 @@ namespace Brawl.EditorTools
         const string WallPath = "Assets/LeartesStudios/OfficeCorridor/Art/Prefabs/SM_Office_wall01c.prefab";
         const string SofaPath = "Assets/LeartesStudios/OfficeCorridor/Art/Prefabs/SM_Sofa01.prefab";
         const string DummyPath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/Demos Assets/Prefabs/Demo Training Dummy.prefab";
+        const string PunchVictimPath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/Demos Assets/Prefabs/PR_PuncherVictim_Mannequin.prefab";
         const string BoxPath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/Demos Assets/Prefabs/Demo Box.prefab";
 
         const float TileSize = 6f;
@@ -79,6 +80,9 @@ namespace Brawl.EditorTools
             if (sofaPrefab != null)
                 PlaceSofas(root.transform, sofaPrefab);
             PlaceDummies(root.transform, dummyPrefab);
+            GameObject victimPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(PunchVictimPath);
+            if (victimPrefab != null)
+                PlacePunchVictims(root.transform, victimPrefab);
             PlaceBoxes(root.transform, boxPrefab);
 
             EditorSceneManager.MarkSceneDirty(scene);
@@ -222,6 +226,34 @@ namespace Brawl.EditorTools
                 dummy.localPosition = spots[i];
                 dummy.localRotation = Quaternion.LookRotation(-spots[i].normalized, Vector3.up);
                 dummy.gameObject.SetActive(true);
+            }
+        }
+
+        static void PlacePunchVictims(Transform parent, GameObject prefab)
+        {
+            Transform group = parent.Find("Characters");
+            if (group == null)
+            {
+                var go = new GameObject("Characters");
+                Undo.RegisterCreatedObjectUndo(go, "Create Lobby Characters");
+                group = go.transform;
+                group.SetParent(parent, false);
+            }
+
+            Vector3[] spots =
+            {
+                new Vector3(0f, 0f, 6f),
+                new Vector3(2.8f, 0f, 6f),
+                new Vector3(-2.8f, 0f, 6f)
+            };
+            for (int i = 0; i < spots.Length; i++)
+            {
+                string name = i == 0 ? "PR_PuncherVictim_Mannequin" : "PR_PuncherVictim_Mannequin (" + i + ")";
+                if (group.Find(name) != null) continue;
+                Transform victim = InstantiateUnder(prefab, group, name);
+                victim.localPosition = spots[i];
+                victim.localRotation = Quaternion.Euler(0f, 180f, 0f);
+                victim.gameObject.SetActive(true);
             }
         }
 
