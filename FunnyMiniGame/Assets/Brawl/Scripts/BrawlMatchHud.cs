@@ -15,6 +15,23 @@ namespace Brawl
     public sealed class BrawlMatchHud : MonoBehaviour
     {
         const int ScoreBarMaxFallback = 99;
+        const string Level01RulesArtworkResource = "UI/Rules/Level01Briefing";
+
+        static readonly Color[] SlotBarColors =
+        {
+            new Color(0.20f, 0.66f, 0.92f, 1f),
+            new Color(0.26f, 0.72f, 0.40f, 1f),
+            new Color(0.94f, 0.72f, 0.12f, 1f),
+            new Color(0.84f, 0.32f, 0.24f, 1f)
+        };
+
+        static readonly string[] PlayerAvatarResources =
+        {
+            "UI/PlayerAvatars/Player01_RedDress",
+            "UI/PlayerAvatars/Player02_WhiteShirtTie",
+            "UI/PlayerAvatars/Player03_GreenPlaid",
+            "UI/PlayerAvatars/Player04_StripedHeavy"
+        };
 
         [Serializable]
         public sealed class PlayerSlot
@@ -24,6 +41,7 @@ namespace Brawl
             public Text Score;
             public Image BarFill;
             public Image Frame;
+            public Image Avatar;
         }
 
         [Header("Top")]
@@ -47,10 +65,18 @@ namespace Brawl
         public Text LobbyLabel;
         public Button LobbyStartButton;
         public Text LobbyStartLabel;
+        public GameObject LobbyReadyRoot;
+        public Text LobbyReadyStatus;
+        public GameObject LobbyBotRoot;
+        public Text LobbyBotValue;
+        public Button LobbyBotMinusButton;
+        public Button LobbyBotPlusButton;
+        public Button LobbyBotAddButton;
         public GameObject RulesRoot;
         public Text RulesTitle;
         public Text RulesBody;
         public Text RulesCountdown;
+        public RawImage RulesArtwork;
         public Button DebugTimerButton;
         public Text DebugTimerLabel;
 
@@ -84,6 +110,12 @@ namespace Brawl
         bool hasDisplayedTurbo;
         string lastHudScene;
         int lastMatchSeq = -1;
+        Sprite[] playerAvatarSprites;
+        Sprite emptyAvatarSprite;
+        int lobbyBotSelection = 1;
+        string lobbyTransientStatus;
+        float lobbyTransientStatusUntil;
+        Image rulesCountdownBackdrop;
 
         void Awake()
         {
@@ -109,8 +141,10 @@ namespace Brawl
             EnsureCursorHint();
             EnsureNextRoundButton();
             EnsureLobbyButton();
+            EnsureLobbyReadyPanel();
             EnsureRulesPanel();
             EnsureDebugTimerButton();
+            ApplyHudVisualStyle();
         }
 
         void ShowEditorPreviewWidgets()
@@ -122,7 +156,9 @@ namespace Brawl
             if (LobbyButton != null)
                 LobbyButton.gameObject.SetActive(true);
             if (LobbyStartButton != null)
-                LobbyStartButton.gameObject.SetActive(true);
+                LobbyStartButton.gameObject.SetActive(false);
+            if (LobbyReadyRoot != null)
+                LobbyReadyRoot.SetActive(true);
             if (RulesRoot != null)
                 RulesRoot.SetActive(true);
             if (DebugTimerButton != null)
@@ -230,8 +266,10 @@ namespace Brawl
 
             ApplyTimerWarning(gm != null && (gm.HudIsPlaying || (gm.HudIsWaiting && remaining > 0f) || gm.HudIsRoundEnd), remaining);
 
+            bool launcherLobby = gm != null && gm.HudIsLobby && BrawlLevelCatalog.ActiveSceneIsLauncher();
             if (StatusText != null)
             {
+                StatusText.gameObject.SetActive(!launcherLobby);
                 if (gm != null && gm.HudIsLobby)
                     StatusText.text = string.IsNullOrEmpty(gm.HudStatusText)
                         ? "大厅等待加入，全员准备后进入第一关"
@@ -274,12 +312,17 @@ namespace Brawl
             if (slot == null) return;
             if (slot.Root != null) slot.Root.SetActive(true);
 
+            EnsureSlotVisualReferences(slot);
+            EnsurePlayerAvatarSprites();
+
             int score = player != null ? player.Score : 0;
             if (slot.Name != null)
                 slot.Name.text = player != null ? BrawlHudNames.Label(player.NetId, hudPlayers) : $"Player {index + 1}";
             if (slot.Score != null) slot.Score.text = $"{score}/{scoreMax}";
             if (slot.BarFill != null)
             {
+                if (index >= 0 && index < SlotBarColors.Length)
+                    slot.BarFill.color = SlotBarColors[index];
                 RectTransform fill = slot.BarFill.rectTransform;
                 fill.anchorMin = new Vector2(0f, 0f);
                 fill.anchorMax = new Vector2(Mathf.Clamp01(score / (float)scoreMax), 1f);
@@ -292,6 +335,63 @@ namespace Brawl
                 bool holding = player is NetFAnnequinController fan && fan.IsHoldingComputer;
                 slot.Frame.color = holding ? HoldingFrameColor : IdleFrameColor;
             }
+
+            if (slot.Avatar != null)
+            {
+                if (player == null)
+                {
+                    slot.Avatar.sprite = ResolveEmptyAvatarSprite(slot);
+                    slot.Avatar.color = new Color(0.68f, 0.70f, 0.74f, 1f);
+                }
+                else
+                {
+                    int avatarIndex = ResolvePlayerAvatarIndex(player, index);
+                    if (playerAvatarSprites != null && avatarIndex >= 0 && avatarIndex < playerAvatarSprites.Length)
+                        slot.Avatar.sprite = playerAvatarSprites[avatarIndex];
+                    slot.Avatar.color = Color.white;
+                }
+                slot.Avatar.preserveAspect = true;
+            }
+        }
+
+        int ResolvePlayerAvatarIndex(IBrawlPlayer player, int fallbackIndex)
+        {
+            string actorName = player?.Transform != null ? player.Transform.name : string.Empty;
+            for (int i = 0; i < PlayerAvatarResources.Length; i++)
+            {
+                if (actorName.IndexOf($"FAnnequinV2_New{i + 1}", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return i;
+            }
+
+            return Mathf.Clamp(fallbackIndex, 0, PlayerAvatarResources.Length - 1);
+        }
+
+        Sprite ResolveEmptyAvatarSprite(PlayerSlot slot)
+        {
+            if (emptyAvatarSprite == null)
+                emptyAvatarSprite = Resources.GetBuiltinResource<Sprite>("UI/Skin/Knob.psd");
+            if (emptyAvatarSprite == null && slot?.Avatar != null)
+                emptyAvatarSprite = slot.Avatar.sprite;
+            return emptyAvatarSprite;
+        }
+
+        void EnsureSlotVisualReferences(PlayerSlot slot)
+        {
+            if (slot?.Root == null) return;
+            Transform root = slot.Root.transform;
+            if (slot.Avatar == null) slot.Avatar = root.Find("Avatar")?.GetComponent<Image>();
+            if (slot.Frame == null) slot.Frame = root.Find("Frame")?.GetComponent<Image>();
+            if (slot.Name == null) slot.Name = root.Find("Name")?.GetComponent<Text>();
+            if (slot.Score == null) slot.Score = root.Find("Score")?.GetComponent<Text>();
+            if (slot.BarFill == null) slot.BarFill = root.Find("BarBack/BarFill")?.GetComponent<Image>();
+        }
+
+        void EnsurePlayerAvatarSprites()
+        {
+            if (playerAvatarSprites != null && playerAvatarSprites.Length == PlayerAvatarResources.Length) return;
+            playerAvatarSprites = new Sprite[PlayerAvatarResources.Length];
+            for (int i = 0; i < PlayerAvatarResources.Length; i++)
+                playerAvatarSprites[i] = Resources.Load<Sprite>(PlayerAvatarResources[i]);
         }
 
         void BindLocalTurbo()
@@ -433,6 +533,7 @@ namespace Brawl
             Outline outline = valueObject.AddComponent<Outline>();
             outline.effectColor = new Color(0f, 0f, 0f, 0.75f);
             outline.effectDistance = new Vector2(1f, -1f);
+            PositionTurboPanel(panel);
         }
 
         void BindNextRoundButton(BrawlGameManager gm)
@@ -590,37 +691,56 @@ namespace Brawl
         void BindLobbyButton(BrawlGameManager gm)
         {
             bool show = gm != null && gm.HudShowLobbyActions && BrawlLevelCatalog.ActiveSceneIsLauncher();
+            if (LobbyReadyRoot != null)
+                LobbyReadyRoot.SetActive(show);
             SetLobbyButtonActive(LobbyButton, show);
-            SetLobbyButtonActive(LobbyStartButton, show);
+            SetLobbyButtonActive(LobbyStartButton, false);
             HideLooseLobbyButtons(show);
             if (!show) return;
 
             bool ready = gm.HudLocalIsReady();
             if (LobbyLabel != null)
-                LobbyLabel.text = ready ? "取消准备" : "准备 Ready";
+                LobbyLabel.text = ready ? "取消准备" : "准备  READY";
             Image readyImage = LobbyButton != null ? LobbyButton.GetComponent<Image>() : null;
             if (readyImage != null)
                 readyImage.color = ready
-                    ? new Color(0.42f, 0.46f, 0.5f, 0.96f)
-                    : new Color(0.18f, 0.55f, 0.92f, 0.96f);
+                    ? new Color(0.42f, 0.43f, 0.40f, 0.92f)
+                    : new Color(0.92f, 0.70f, 0.04f, 0.96f);
             if (LobbyButton != null)
             {
                 LobbyButton.interactable = true;
                 LobbyButton.transform.SetAsLastSibling();
             }
 
-            bool allReady = gm.HudLobbyAllReady;
-            if (LobbyStartLabel != null)
-                LobbyStartLabel.text = allReady ? "开始游戏" : "等待全员准备";
-            Image startImage = LobbyStartButton != null ? LobbyStartButton.GetComponent<Image>() : null;
-            if (startImage != null)
-                startImage.color = allReady
-                    ? new Color(0.16f, 0.72f, 0.38f, 0.96f)
-                    : new Color(0.35f, 0.38f, 0.42f, 0.88f);
-            if (LobbyStartButton != null)
+            bool showTransient = Time.unscaledTime < lobbyTransientStatusUntil && !string.IsNullOrEmpty(lobbyTransientStatus);
+            if (LobbyReadyStatus != null)
             {
-                LobbyStartButton.interactable = true;
-                LobbyStartButton.transform.SetAsLastSibling();
+                string readyLine = string.IsNullOrEmpty(gm.HudLobbyReadyLine) ? "已准备 0/0" : gm.HudLobbyReadyLine;
+                LobbyReadyStatus.text = showTransient
+                    ? lobbyTransientStatus
+                    : gm.HudLobbyAllReady
+                        ? readyLine + "    全员已准备，正在进入第一关"
+                        : readyLine + "    全员准备后进入第一关";
+            }
+
+            bool hostCanAddBots = NetworkServer.active && NetworkClient.isConnected;
+            if (LobbyBotRoot != null)
+                LobbyBotRoot.SetActive(hostCanAddBots);
+            if (LobbyBotValue != null)
+                LobbyBotValue.text = lobbyBotSelection.ToString();
+
+            int aliveBots = BrawlBotBrain.AliveCount;
+            bool canAdd = hostCanAddBots && aliveBots < BrawlBotBrain.MaxBots;
+            if (LobbyBotMinusButton != null)
+                LobbyBotMinusButton.interactable = hostCanAddBots && lobbyBotSelection > 1;
+            if (LobbyBotPlusButton != null)
+                LobbyBotPlusButton.interactable = hostCanAddBots && lobbyBotSelection < BrawlBotBrain.MaxBots;
+            if (LobbyBotAddButton != null)
+            {
+                LobbyBotAddButton.interactable = canAdd;
+                Text addLabel = LobbyBotAddButton.GetComponentInChildren<Text>();
+                if (addLabel != null)
+                    addLabel.text = canAdd ? "添加" : "已满";
             }
         }
 
@@ -668,23 +788,16 @@ namespace Brawl
 
             BindOrCreateLobbyButton(
                 "LobbyAction",
-                new Vector2(-130f, -150f),
-                new Color(0.18f, 0.55f, 0.92f, 0.96f),
-                "准备 Ready",
+                Vector2.zero,
+                new Color(0.92f, 0.70f, 0.04f, 0.96f),
+                "准备  READY",
                 OnLobbyReadyClicked,
                 fallbackFont,
                 ref LobbyButton,
                 ref LobbyLabel);
 
-            BindOrCreateLobbyButton(
-                "LobbyStart",
-                new Vector2(130f, -150f),
-                new Color(0.16f, 0.72f, 0.38f, 0.96f),
-                "开始游戏",
-                OnLobbyStartClicked,
-                fallbackFont,
-                ref LobbyStartButton,
-                ref LobbyStartLabel);
+            if (LobbyStartButton != null)
+                LobbyStartButton.gameObject.SetActive(false);
         }
 
         void BindOrCreateLobbyButton(
@@ -753,6 +866,275 @@ namespace Brawl
             buttonObject.SetActive(false);
         }
 
+        void EnsureLobbyReadyPanel()
+        {
+            Font fallbackFont = TimerText != null && TimerText.font != null
+                ? TimerText.font
+                : Resources.GetBuiltinResource<Font>("Arial.ttf");
+
+            RectTransform root;
+            Transform existing = transform.Find("LobbyReadyPanel");
+            if (existing is RectTransform existingRect)
+            {
+                root = existingRect;
+            }
+            else
+            {
+                GameObject rootObject = new GameObject("LobbyReadyPanel", typeof(RectTransform));
+                root = rootObject.GetComponent<RectTransform>();
+                root.SetParent(transform, false);
+            }
+
+            SetHudRect(root, new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f), new Vector2(-18f, 18f), new Vector2(360f, 156f));
+            LobbyReadyRoot = root.gameObject;
+
+            Transform statusTransform = root.Find("ReadyStatus");
+            Image statusBack;
+            if (statusTransform == null)
+            {
+                GameObject statusObject = new GameObject("ReadyStatus", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                statusTransform = statusObject.transform;
+                statusTransform.SetParent(root, false);
+                statusBack = statusObject.GetComponent<Image>();
+            }
+            else
+            {
+                statusBack = statusTransform.GetComponent<Image>();
+                if (statusBack == null) statusBack = statusTransform.gameObject.AddComponent<Image>();
+            }
+            statusBack.color = new Color(0.20f, 0.12f, 0.07f, 0.68f);
+            statusBack.raycastTarget = false;
+            SetHudRect(statusTransform as RectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), Vector2.zero, new Vector2(360f, 28f));
+            EnsureGraphicOutline(statusBack, new Color(0.68f, 0.60f, 0.46f, 0.82f), 1f);
+
+            Transform readyStatusTransform = statusTransform.Find("Label");
+            if (readyStatusTransform == null)
+                LobbyReadyStatus = CreatePlainText(statusTransform, "Label", fallbackFont, 14, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            else
+                LobbyReadyStatus = readyStatusTransform.GetComponent<Text>();
+            SetHudRect(LobbyReadyStatus.rectTransform, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            LobbyReadyStatus.text = "已准备 1/2    全员准备后进入第一关";
+
+            Transform readyFrameTransform = root.Find("ReadyButtonFrame");
+            Image readyFrameImage;
+            if (readyFrameTransform == null)
+            {
+                GameObject frameObject = new GameObject("ReadyButtonFrame", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                readyFrameTransform = frameObject.transform;
+                readyFrameTransform.SetParent(root, false);
+                readyFrameImage = frameObject.GetComponent<Image>();
+            }
+            else
+            {
+                readyFrameImage = readyFrameTransform.GetComponent<Image>();
+                if (readyFrameImage == null) readyFrameImage = readyFrameTransform.gameObject.AddComponent<Image>();
+            }
+            readyFrameImage.color = new Color(0.42f, 0.42f, 0.39f, 0.98f);
+            readyFrameImage.raycastTarget = false;
+            SetHudRect(readyFrameTransform as RectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -34f), new Vector2(360f, 78f));
+            EnsureGraphicOutline(readyFrameImage, new Color(0.035f, 0.035f, 0.03f, 1f), 2f);
+            EnsureBevelEdges(readyFrameTransform as RectTransform);
+
+            if (LobbyButton != null)
+            {
+                RectTransform readyRect = LobbyButton.transform as RectTransform;
+                readyRect.SetParent(readyFrameTransform, false);
+                SetHudRect(readyRect, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(-8f, -8f));
+                Image readyImage = LobbyButton.GetComponent<Image>();
+                if (readyImage != null)
+                {
+                    readyImage.color = new Color(0.92f, 0.70f, 0.04f, 0.96f);
+                    EnsureGraphicOutline(readyImage, new Color(0.06f, 0.06f, 0.05f, 0.95f), 1f);
+                }
+                if (LobbyLabel != null)
+                {
+                    LobbyLabel.fontSize = 30;
+                    LobbyLabel.fontStyle = FontStyle.Bold;
+                    LobbyLabel.color = new Color(0.08f, 0.07f, 0.04f, 1f);
+                    DisableTextOutline(LobbyLabel);
+                }
+            }
+
+            Transform botTransform = root.Find("BotRow");
+            Image botBack;
+            if (botTransform == null)
+            {
+                GameObject botObject = new GameObject("BotRow", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                botTransform = botObject.transform;
+                botTransform.SetParent(root, false);
+                botBack = botObject.GetComponent<Image>();
+            }
+            else
+            {
+                botBack = botTransform.GetComponent<Image>();
+                if (botBack == null) botBack = botTransform.gameObject.AddComponent<Image>();
+            }
+            botBack.color = new Color(0.08f, 0.09f, 0.10f, 0.64f);
+            botBack.raycastTarget = true;
+            SetHudRect(botTransform as RectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), Vector2.zero, new Vector2(360f, 42f));
+            EnsureGraphicOutline(botBack, new Color(0.54f, 0.52f, 0.46f, 0.78f), 1f);
+            LobbyBotRoot = botTransform.gameObject;
+
+            Text botTitle = botTransform.Find("Title")?.GetComponent<Text>();
+            if (botTitle == null)
+                botTitle = CreatePlainText(botTransform, "Title", fallbackFont, 15, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
+            SetHudRect(botTitle.rectTransform, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(10f, 0f), new Vector2(150f, 36f));
+            botTitle.text = "开房 Bot";
+
+            LobbyBotMinusButton = EnsureLobbyBotButton(botTransform, "Minus", "−", fallbackFont, OnLobbyBotMinusClicked);
+            SetHudRect(LobbyBotMinusButton.transform as RectTransform, new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(-166f, 0f), new Vector2(32f, 30f));
+
+            Transform valueTransform = botTransform.Find("Value");
+            if (valueTransform == null)
+                LobbyBotValue = CreatePlainText(botTransform, "Value", fallbackFont, 18, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.96f, 0.76f, 0.12f, 1f));
+            else
+                LobbyBotValue = valueTransform.GetComponent<Text>();
+            SetHudRect(LobbyBotValue.rectTransform, new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(-128f, 0f), new Vector2(36f, 30f));
+            LobbyBotValue.text = lobbyBotSelection.ToString();
+
+            LobbyBotPlusButton = EnsureLobbyBotButton(botTransform, "Plus", "+", fallbackFont, OnLobbyBotPlusClicked);
+            SetHudRect(LobbyBotPlusButton.transform as RectTransform, new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(-88f, 0f), new Vector2(32f, 30f));
+
+            LobbyBotAddButton = EnsureLobbyBotButton(botTransform, "Add", "添加", fallbackFont, OnLobbyBotAddClicked, true);
+            SetHudRect(LobbyBotAddButton.transform as RectTransform, new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(1f, 0.5f), new Vector2(-8f, 0f), new Vector2(72f, 30f));
+
+            LobbyReadyRoot.SetActive(false);
+        }
+
+        Button EnsureLobbyBotButton(Transform parent, string name, string label, Font font, UnityEngine.Events.UnityAction onClick, bool accent = false)
+        {
+            Transform existing = parent.Find(name);
+            Button button = existing != null ? existing.GetComponent<Button>() : null;
+            Text text = existing != null ? existing.Find("Label")?.GetComponent<Text>() : null;
+            if (button == null)
+            {
+                GameObject buttonObject = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+                buttonObject.transform.SetParent(parent, false);
+                button = buttonObject.GetComponent<Button>();
+                button.targetGraphic = buttonObject.GetComponent<Image>();
+                text = CreatePlainText(buttonObject.transform, "Label", font, accent ? 17 : 22, FontStyle.Bold, TextAnchor.MiddleCenter,
+                    accent ? new Color(0.08f, 0.07f, 0.04f, 1f) : Color.white);
+                SetHudRect(text.rectTransform, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            }
+
+            Image image = button.GetComponent<Image>();
+            image.color = accent ? new Color(0.92f, 0.70f, 0.04f, 0.96f) : new Color(0.28f, 0.29f, 0.30f, 0.94f);
+            image.raycastTarget = true;
+            EnsureGraphicOutline(image, new Color(0.05f, 0.05f, 0.05f, 0.95f), 1f);
+            EnsureBevelEdges(button.transform as RectTransform);
+            text.text = label;
+            text.fontSize = accent ? 15 : 18;
+            text.fontStyle = FontStyle.Bold;
+            text.color = accent ? new Color(0.08f, 0.07f, 0.04f, 1f) : Color.white;
+            if (accent)
+                DisableTextOutline(text);
+            button.onClick.RemoveListener(onClick);
+            button.onClick.AddListener(onClick);
+            return button;
+        }
+
+        static void EnsureGraphicOutline(Graphic graphic, Color color, float distance)
+        {
+            if (graphic == null) return;
+            Outline outline = graphic.GetComponent<Outline>();
+            if (outline == null) outline = graphic.gameObject.AddComponent<Outline>();
+            outline.effectColor = color;
+            outline.effectDistance = new Vector2(distance, -distance);
+            outline.useGraphicAlpha = true;
+        }
+
+        static void DisableTextOutline(Text text)
+        {
+            if (text == null) return;
+            Outline outline = text.GetComponent<Outline>();
+            if (outline != null) outline.enabled = false;
+        }
+
+        static void EnsureBevelEdges(RectTransform target)
+        {
+            if (target == null) return;
+            Color light = new Color(0.88f, 0.86f, 0.78f, 0.92f);
+            Color dark = new Color(0.035f, 0.035f, 0.03f, 0.96f);
+            EnsureBevelEdge(target, "BevelTop", light, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, 2f));
+            EnsureBevelEdge(target, "BevelLeft", light, new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(0f, 0.5f), new Vector2(2f, 0f));
+            EnsureBevelEdge(target, "BevelBottom", dark, new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 2f));
+            EnsureBevelEdge(target, "BevelRight", dark, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(1f, 0.5f), new Vector2(2f, 0f));
+        }
+
+        static void EnsureBevelEdge(RectTransform parent, string name, Color color, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, Vector2 size)
+        {
+            Transform existing = parent.Find(name);
+            Image edge;
+            if (existing == null)
+            {
+                GameObject edgeObject = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                edgeObject.transform.SetParent(parent, false);
+                edge = edgeObject.GetComponent<Image>();
+            }
+            else
+            {
+                edge = existing.GetComponent<Image>();
+                if (edge == null) edge = existing.gameObject.AddComponent<Image>();
+            }
+
+            edge.color = color;
+            edge.raycastTarget = false;
+            SetHudRect(edge.rectTransform, anchorMin, anchorMax, pivot, Vector2.zero, size);
+            edge.transform.SetAsFirstSibling();
+        }
+
+        void OnLobbyBotMinusClicked()
+        {
+            lobbyBotSelection = Mathf.Max(1, lobbyBotSelection - 1);
+        }
+
+        void OnLobbyBotPlusClicked()
+        {
+            lobbyBotSelection = Mathf.Min(BrawlBotBrain.MaxBots, lobbyBotSelection + 1);
+        }
+
+        void OnLobbyBotAddClicked()
+        {
+            if (!NetworkServer.active || !NetworkClient.isConnected)
+            {
+                SetLobbyTransientStatus("只有房主可以添加 Bot");
+                return;
+            }
+
+            BrawlNetworkManager manager = BrawlNetworkManager.SingletonBrawl;
+            if (manager == null)
+            {
+                SetLobbyTransientStatus("未找到联机管理器，Bot 添加失败");
+                return;
+            }
+
+            int remaining = Mathf.Max(0, BrawlBotBrain.MaxBots - BrawlBotBrain.AliveCount);
+            if (remaining <= 0)
+            {
+                SetLobbyTransientStatus($"Bot 已达到上限 {BrawlBotBrain.MaxBots}/{BrawlBotBrain.MaxBots}");
+                return;
+            }
+
+            int requested = Mathf.Min(lobbyBotSelection, remaining);
+            int spawned = manager.SpawnBots(requested);
+            if (spawned <= 0)
+            {
+                SetLobbyTransientStatus("Bot 添加失败，请稍后再试");
+                return;
+            }
+
+            int alive = BrawlBotBrain.AliveCount;
+            SetLobbyTransientStatus(alive >= BrawlBotBrain.MaxBots
+                ? $"已添加 {spawned} 个 Bot，房间已满"
+                : $"已添加 {spawned} 个 Bot，当前 Bot {alive}/{BrawlBotBrain.MaxBots}");
+        }
+
+        void SetLobbyTransientStatus(string text)
+        {
+            lobbyTransientStatus = text;
+            lobbyTransientStatusUntil = Time.unscaledTime + 2.5f;
+        }
+
         void BindRulesPanel(BrawlGameManager gm)
         {
             bool show = gm != null && gm.HudIsShowingRules;
@@ -763,6 +1145,43 @@ namespace Brawl
             if (RulesRoot != null)
                 RulesRoot.transform.SetAsLastSibling();
 
+            bool illustrated = ShouldUseIllustratedRules();
+            if (RulesArtwork != null)
+                RulesArtwork.gameObject.SetActive(illustrated);
+            if (rulesCountdownBackdrop != null)
+                rulesCountdownBackdrop.gameObject.SetActive(illustrated);
+            if (RulesTitle != null)
+                RulesTitle.gameObject.SetActive(!illustrated);
+            if (RulesBody != null)
+                RulesBody.gameObject.SetActive(!illustrated);
+
+            Transform card = RulesRoot != null ? RulesRoot.transform.Find("Card") : null;
+            Transform accent = card != null ? card.Find("Accent") : null;
+            if (accent != null)
+                accent.gameObject.SetActive(!illustrated);
+            if (card is RectTransform cardRect)
+            {
+                if (illustrated)
+                {
+                    SetHudRect(cardRect, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+                }
+                else
+                {
+                    SetHudRect(
+                        cardRect,
+                        new Vector2(0.5f, 0.5f),
+                        new Vector2(0.5f, 0.5f),
+                        new Vector2(0.5f, 0.5f),
+                        Vector2.zero,
+                        new Vector2(640f, 430f));
+                }
+                Image cardImage = cardRect.GetComponent<Image>();
+                if (cardImage != null)
+                    cardImage.color = illustrated
+                        ? new Color(0.015f, 0.018f, 0.024f, 0.98f)
+                        : new Color(0.05f, 0.06f, 0.08f, 0.94f);
+            }
+
             if (RulesTitle != null)
                 RulesTitle.text = gm.HudRulesTitle;
             if (RulesBody != null && !string.IsNullOrEmpty(gm.HudRulesBody))
@@ -771,16 +1190,49 @@ namespace Brawl
             int seconds = Mathf.Max(1, Mathf.CeilToInt(gm.HudRemainingSeconds));
             if (RulesCountdown != null)
             {
-                RulesCountdown.text = $"{seconds} 秒后进入空气墙等待区";
+                RulesCountdown.gameObject.SetActive(true);
+                RulesCountdown.text = $"{seconds}s后进入关卡";
+                RulesCountdown.fontSize = illustrated ? 30 : 22;
+                RulesCountdown.fontStyle = FontStyle.Bold;
+                RulesCountdown.alignment = TextAnchor.MiddleCenter;
+                if (illustrated)
+                {
+                    SetHudRect(
+                        RulesCountdown.rectTransform,
+                        new Vector2(0.28f, 0.065f),
+                        new Vector2(0.72f, 0.155f),
+                        new Vector2(0.5f, 0.5f),
+                        Vector2.zero,
+                        Vector2.zero);
+                }
+                else
+                {
+                    SetHudRect(
+                        RulesCountdown.rectTransform,
+                        new Vector2(0.5f, 0f),
+                        new Vector2(0.5f, 0f),
+                        new Vector2(0.5f, 0f),
+                        new Vector2(0f, 22f),
+                        new Vector2(560f, 36f));
+                }
                 float pulse = Mathf.PingPong(Time.unscaledTime * 3.2f, 1f);
                 RulesCountdown.color = Color.Lerp(new Color(1f, 0.84f, 0.28f, 1f), Color.white, pulse);
+                RulesCountdown.transform.SetAsLastSibling();
             }
+        }
+
+        bool ShouldUseIllustratedRules()
+        {
+            return BrawlLevelCatalog.GetLevelIndex(BrawlLevelCatalog.ActiveSceneName()) == 0
+                && RulesArtwork != null
+                && RulesArtwork.texture != null;
         }
 
         void EnsureRulesPanel()
         {
             if (RulesRoot != null && RulesBody != null && RulesCountdown != null)
             {
+                EnsureRulesArtwork(RulesRoot.transform.Find("Card") as RectTransform);
                 RulesRoot.SetActive(false);
                 return;
             }
@@ -794,6 +1246,7 @@ namespace Brawl
                 RulesCountdown = existing.Find("Card/Countdown")?.GetComponent<Text>();
                 if (RulesRoot != null && RulesBody != null && RulesCountdown != null)
                 {
+                    EnsureRulesArtwork(existing.Find("Card") as RectTransform);
                     RulesRoot.SetActive(false);
                     return;
                 }
@@ -851,9 +1304,62 @@ namespace Brawl
 
             RulesCountdown = CreatePlainText(cardRect, "Countdown", fallbackFont, 22, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(1f, 0.84f, 0.28f, 1f));
             SetHudRect(RulesCountdown.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 22f), new Vector2(560f, 36f));
-            RulesCountdown.text = "6 秒后自动开始";
+            RulesCountdown.text = "10s后进入关卡";
+
+            EnsureRulesArtwork(cardRect);
 
             root.SetActive(false);
+        }
+
+        void EnsureRulesArtwork(RectTransform cardRect)
+        {
+            if (cardRect == null) return;
+
+            SetHudRect(cardRect, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+
+            Image cardImage = cardRect.GetComponent<Image>();
+            if (cardImage != null)
+                cardImage.color = new Color(0.015f, 0.018f, 0.024f, 0.98f);
+
+            Transform artworkTransform = cardRect.Find("Artwork");
+            if (artworkTransform == null)
+            {
+                GameObject artworkObject = new GameObject("Artwork", typeof(RectTransform), typeof(CanvasRenderer), typeof(RawImage));
+                artworkTransform = artworkObject.transform;
+                artworkTransform.SetParent(cardRect, false);
+            }
+
+            RulesArtwork = artworkTransform.GetComponent<RawImage>();
+            if (RulesArtwork == null)
+                RulesArtwork = artworkTransform.gameObject.AddComponent<RawImage>();
+            SetHudRect(RulesArtwork.rectTransform, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            RulesArtwork.texture = Resources.Load<Texture2D>(Level01RulesArtworkResource);
+            RulesArtwork.color = Color.white;
+            RulesArtwork.raycastTarget = false;
+            RulesArtwork.uvRect = new Rect(0f, 0f, 1f, 1f);
+            RulesArtwork.transform.SetAsFirstSibling();
+
+            Transform backdropTransform = cardRect.Find("CountdownBackdrop");
+            if (backdropTransform == null)
+            {
+                GameObject backdropObject = new GameObject("CountdownBackdrop", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                backdropTransform = backdropObject.transform;
+                backdropTransform.SetParent(cardRect, false);
+            }
+
+            rulesCountdownBackdrop = backdropTransform.GetComponent<Image>();
+            if (rulesCountdownBackdrop == null)
+                rulesCountdownBackdrop = backdropTransform.gameObject.AddComponent<Image>();
+            SetHudRect(
+                rulesCountdownBackdrop.rectTransform,
+                new Vector2(0.27f, 0.06f),
+                new Vector2(0.73f, 0.16f),
+                new Vector2(0.5f, 0.5f),
+                Vector2.zero,
+                Vector2.zero);
+            rulesCountdownBackdrop.color = new Color(0.025f, 0.027f, 0.032f, 1f);
+            rulesCountdownBackdrop.raycastTarget = false;
+            rulesCountdownBackdrop.transform.SetSiblingIndex(1);
         }
 
         static Text CreatePlainText(Transform parent, string name, Font font, int size, FontStyle style, TextAnchor align, Color color)
@@ -894,10 +1400,107 @@ namespace Brawl
                 : new Color(1f, 0.86f, 0.28f, 1f);
         }
 
+        void ApplyHudVisualStyle()
+        {
+            IdleFrameColor = new Color(0.055f, 0.06f, 0.07f, 0.58f);
+            HoldingFrameColor = new Color(0.96f, 0.74f, 0.10f, 0.86f);
+
+            RectTransform topBar = FindNamedParent(TimerText != null ? TimerText.transform : null, "TopBar") as RectTransform;
+            if (topBar != null)
+                SetHudRect(topBar, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -4f), new Vector2(0f, 94f));
+
+            // 使用比例锚点而不是按 1920 宽度写死坐标，兼容 Launcher 现有的 1280x720 Canvas。
+            // Slot 数组顺序是 P1、P2、P3、P4；视觉顺序保持 P2、P1、计时、P3、P4。
+            float[] anchors = { 0.30f, 0.10f, 0.70f, 0.90f };
+            int count = Slots != null ? Mathf.Min(Slots.Length, anchors.Length) : 0;
+            EnsurePlayerAvatarSprites();
+            for (int i = 0; i < count; i++)
+            {
+                PlayerSlot slot = Slots[i];
+                if (slot?.Root == null) continue;
+                EnsureSlotVisualReferences(slot);
+
+                RectTransform root = slot.Root.transform as RectTransform;
+                Vector2 slotAnchor = new Vector2(anchors[i], 1f);
+                SetHudRect(root, slotAnchor, slotAnchor, new Vector2(0.5f, 1f), new Vector2(0f, -2f), new Vector2(220f, 58f));
+
+                if (slot.Frame != null)
+                {
+                    SetHudRect(slot.Frame.rectTransform, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+                    slot.Frame.color = IdleFrameColor;
+                    EnsureGraphicOutline(slot.Frame, new Color(0.66f, 0.65f, 0.60f, 0.58f), 1f);
+                }
+
+                if (slot.Avatar != null)
+                {
+                    SetHudRect(slot.Avatar.rectTransform, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(28f, 0f), new Vector2(44f, 44f));
+                    slot.Avatar.sprite = ResolveEmptyAvatarSprite(slot);
+                    slot.Avatar.color = new Color(0.68f, 0.70f, 0.74f, 1f);
+                    slot.Avatar.preserveAspect = true;
+                }
+
+                if (slot.Name != null)
+                {
+                    SetHudRect(slot.Name.rectTransform, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(56f, 12f), new Vector2(116f, 20f));
+                    slot.Name.fontSize = 14;
+                    slot.Name.alignment = TextAnchor.MiddleLeft;
+                }
+
+                Transform barTransform = slot.Root.transform.Find("BarBack");
+                Image barBack = barTransform != null ? barTransform.GetComponent<Image>() : null;
+                if (barBack != null)
+                {
+                    SetHudRect(barBack.rectTransform, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(56f, -12f), new Vector2(104f, 9f));
+                    barBack.color = new Color(0.045f, 0.05f, 0.055f, 0.94f);
+                }
+
+                if (slot.BarFill != null && i < SlotBarColors.Length)
+                    slot.BarFill.color = SlotBarColors[i];
+
+                if (slot.Score != null)
+                {
+                    SetHudRect(slot.Score.rectTransform, new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(0f, 0.5f), new Vector2(166f, -12f), new Vector2(48f, 18f));
+                    slot.Score.fontSize = 12;
+                    slot.Score.alignment = TextAnchor.MiddleLeft;
+                }
+            }
+
+            if (TimerText != null && TimerText.transform.parent is RectTransform timer)
+            {
+                SetHudRect(timer, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), Vector2.zero, new Vector2(72f, 72f));
+                Image ring = timer.Find("Ring")?.GetComponent<Image>();
+                Image fill = timer.Find("Fill")?.GetComponent<Image>();
+                if (ring != null)
+                {
+                    SetHudRect(ring.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(72f, 72f));
+                    ring.color = new Color(0.78f, 0.79f, 0.76f, 0.84f);
+                }
+                if (fill != null)
+                {
+                    SetHudRect(fill.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(62f, 62f));
+                    fill.color = new Color(0.08f, 0.085f, 0.09f, 0.78f);
+                }
+                SetHudRect(TimerText.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(68f, 38f));
+                TimerText.fontSize = 22;
+            }
+
+            if (StatusText != null)
+                SetHudRect(StatusText.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, -6f), new Vector2(900f, 28f));
+
+            PositionTurboPanel(TurboTitle != null ? TurboTitle.transform : null);
+        }
+
+        static Transform FindNamedParent(Transform child, string name)
+        {
+            Transform current = child;
+            while (current != null && current.name != name) current = current.parent;
+            return current;
+        }
+
         void EnsureCursorHint()
         {
             const string controlsHint =
-                "W S A D : Movement\nSpace : Jump\nLeft Click : Punch\nHold Right Click : Pick Up Laptop\nRelease Right Click : Put Down\nEsc : 退出鼠标捕获\nAlt : 重新捕获鼠标";
+                "W S A D : 移动\nSpace : 跳跃\nLeft Click : 攻击\nHold Right Click : 长按抓取\nRelease Right Click : 松开放下\nEsc : 退出鼠标捕获\nAlt : 重新捕获鼠标";
 
             if (ControlsText == null)
             {
@@ -909,9 +1512,14 @@ namespace Brawl
             {
                 ControlsText.text = controlsHint;
                 RectTransform controlsRect = ControlsText.rectTransform;
-                controlsRect.anchoredPosition = new Vector2(24f, 140f);
-                if (controlsRect.sizeDelta.y < 196f)
-                    controlsRect.sizeDelta = new Vector2(Mathf.Max(460f, controlsRect.sizeDelta.x), 196f);
+                controlsRect.anchorMin = Vector2.zero;
+                controlsRect.anchorMax = Vector2.zero;
+                controlsRect.pivot = Vector2.zero;
+                controlsRect.anchoredPosition = new Vector2(24f, 160f);
+                controlsRect.sizeDelta = new Vector2(420f, 180f);
+                ControlsText.fontSize = 15;
+                ControlsText.lineSpacing = 0.96f;
+                ControlsText.color = new Color(1f, 1f, 1f, 0.82f);
                 ControlsText.gameObject.SetActive(false);
             }
 
@@ -961,7 +1569,16 @@ namespace Brawl
             Transform current = child;
             while (current != null && current.name != "Turbo") current = current.parent;
             if (current is RectTransform panel)
-                panel.anchoredPosition = new Vector2(24f, -168f);
+            {
+                panel.anchorMin = new Vector2(0.5f, 0f);
+                panel.anchorMax = new Vector2(0.5f, 0f);
+                panel.pivot = new Vector2(0.5f, 0f);
+                panel.anchoredPosition = new Vector2(0f, 24f);
+                panel.sizeDelta = new Vector2(252f, 42f);
+                Image panelImage = panel.GetComponent<Image>();
+                if (panelImage != null)
+                    panelImage.color = new Color(0.05f, 0.05f, 0.055f, 0.56f);
+            }
         }
 
         void BindRanking(BrawlGameManager gm)
