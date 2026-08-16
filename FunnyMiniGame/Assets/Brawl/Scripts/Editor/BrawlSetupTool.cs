@@ -167,6 +167,7 @@ namespace Brawl.EditorTools
             manager.dontDestroyOnLoad = false;
             go.AddComponent<NetworkManagerHUD>();
             go.AddComponent<MiniGameNetworkHook>();
+            BrawlServerDiscovery.Ensure(manager);
 
             GameObject saved = PrefabUtility.SaveAsPrefabAsset(go, NetworkPrefabPath);
             Object.DestroyImmediate(go);

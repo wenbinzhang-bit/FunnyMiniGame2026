@@ -45,6 +45,17 @@ namespace Brawl
             RegisterPlayerModelPrefabs();
             base.OnStartServer();
             SpawnGameManagerIfNeeded();
+            BrawlServerDiscovery discovery = BrawlServerDiscovery.Ensure(this);
+            if (discovery != null)
+                discovery.Advertise(discovery.ServerName);
+        }
+
+        public override void OnStopServer()
+        {
+            BrawlServerDiscovery discovery = GetComponent<BrawlServerDiscovery>();
+            if (discovery != null)
+                discovery.StopDiscovery();
+            base.OnStopServer();
         }
 
         public bool TryChangeLevel(string sceneName)

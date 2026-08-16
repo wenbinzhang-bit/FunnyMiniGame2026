@@ -10,8 +10,8 @@ namespace Brawl
     [DefaultExecutionOrder(40)]
     public sealed class BrawlNetworkHud : MonoBehaviour
     {
-        const float PanelWidth = 348f;
-        const float DisconnectedHeight = 268f;
+        const float PanelWidth = 372f;
+        const float DisconnectedHeight = 428f;
         const float ConnectedHeight = 124f;
         const float ConnectingHeight = 132f;
 
@@ -34,14 +34,19 @@ namespace Brawl
         Text hintText;
         Text statusText;
         Image statusDot;
+        InputField nameField;
         InputField addressField;
         InputField portField;
         Text botValue;
         Text connectingLabel;
+        Text emptyListText;
+        RectTransform serverListContent;
         Button stopHostButton;
         Button stopClientButton;
         Font font;
         NetworkManager manager;
+        BrawlServerDiscovery discovery;
+        string lastListFingerprint;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Boot()
@@ -89,16 +94,16 @@ namespace Brawl
             float height = connecting ? ConnectingHeight : server || client ? ConnectedHeight : DisconnectedHeight;
             panel.sizeDelta = new Vector2(PanelWidth, height);
 
-            if (!addressField.isFocused)
+            if (addressField != null && !addressField.isFocused)
                 addressField.text = string.IsNullOrEmpty(manager.networkAddress) ? "localhost" : manager.networkAddress;
-            else
+            else if (addressField != null)
                 manager.networkAddress = addressField.text.Trim();
 
             if (Transport.active is PortTransport portTransport)
             {
-                if (!portField.isFocused)
+                if (portField != null && !portField.isFocused)
                     portField.text = portTransport.Port.ToString();
-                else if (ushort.TryParse(portField.text, out ushort port))
+                else if (portField != null && ushort.TryParse(portField.text, out ushort port))
                     portTransport.Port = port;
             }
 
@@ -109,14 +114,16 @@ namespace Brawl
             }
             else if (server && client)
             {
+                string room = discovery != null ? discovery.ServerName : "房间";
                 int bots = BrawlBotBrain.AliveCount;
                 BindHeader("主机中", LiveDot, bots > 0
-                    ? $"房间已开启  ·  {TransportName()}  ·  Bot {bots}"
-                    : $"房间已开启，把本机 IP 发给同伴  ·  {TransportName()}");
+                    ? $"{room} 已开启  ·  {TransportName()}  ·  Bot {bots}"
+                    : $"{room} 已开启，同伴可在列表里点进来  ·  {TransportName()}");
             }
             else if (server)
             {
-                BindHeader("服务器", LiveDot, $"仅服务器模式  ·  {TransportName()}");
+                string room = discovery != null ? discovery.ServerName : "房间";
+                BindHeader("服务器", LiveDot, $"{room}  ·  仅服务器  ·  {TransportName()}");
             }
             else if (client)
             {
@@ -124,7 +131,9 @@ namespace Brawl
             }
             else
             {
-                BindHeader("未连接", IdleDot, "同一局域网填写主机 IP，点「加入房间」即可");
+                BindHeader("未连接", IdleDot, "同一局域网会自动列出房间，点一项即可加入");
+                EnsureBrowsing();
+                RefreshServerList();
             }
 
             if (botValue != null)
@@ -179,19 +188,126 @@ namespace Brawl
 
         void OnHost()
         {
-            if (manager != null) manager.StartHost();
+            if (manager == null) return;
+            ApplyRoomName();
+            manager.StartHost();
         }
 
         void OnJoin()
         {
-            if (manager == null) return;
+            if (manager == null || addressField == null) return;
             manager.networkAddress = addressField.text.Trim();
+            if (discovery != null)
+                discovery.StopDiscovery();
             manager.StartClient();
+        }
+
+        void OnJoinFound(BrawlFoundServer server)
+        {
+            if (manager == null || server == null) return;
+            if (discovery != null)
+                discovery.StopDiscovery();
+            if (server.Uri != null)
+            {
+                manager.StartClient(server.Uri);
+                return;
+            }
+
+            manager.networkAddress = server.Address;
+            if (Transport.active is PortTransport portTransport && server.Port > 0)
+                portTransport.Port = server.Port;
+            manager.StartClient();
+        }
+
+        void OnRefreshList()
+        {
+            discovery = BrawlServerDiscovery.Ensure(manager);
+            if (discovery == null) return;
+            discovery.ClearFound();
+            lastListFingerprint = null;
+            if (discovery.IsSearching)
+                discovery.BroadcastDiscoveryRequest();
+            else
+                discovery.BeginBrowse();
+            RefreshServerList();
         }
 
         void OnServerOnly()
         {
-            if (manager != null) manager.StartServer();
+            if (manager == null) return;
+            ApplyRoomName();
+            manager.StartServer();
+        }
+
+        void ApplyRoomName()
+        {
+            discovery = BrawlServerDiscovery.Ensure(manager);
+            string room = nameField != null ? nameField.text.Trim() : "";
+            if (string.IsNullOrEmpty(room))
+                room = BrawlServerDiscovery.DefaultServerName();
+            if (nameField != null)
+                nameField.text = room;
+            if (discovery != null)
+            {
+                discovery.ServerName = room;
+                BrawlServerDiscovery.RememberServerName(room);
+            }
+        }
+
+        void EnsureBrowsing()
+        {
+            discovery = BrawlServerDiscovery.Ensure(manager);
+            if (discovery == null) return;
+            if (nameField != null && !nameField.isFocused && string.IsNullOrWhiteSpace(nameField.text))
+                nameField.text = BrawlServerDiscovery.DefaultServerName();
+            discovery.BeginBrowse();
+        }
+
+        void RefreshServerList()
+        {
+            if (serverListContent == null || discovery == null) return;
+            string fingerprint = discovery.ListFingerprint();
+            if (fingerprint == lastListFingerprint) return;
+            lastListFingerprint = fingerprint;
+
+            for (int i = serverListContent.childCount - 1; i >= 0; i--)
+                Destroy(serverListContent.GetChild(i).gameObject);
+
+            var servers = discovery.CopyFoundServers();
+            if (emptyListText != null)
+            {
+                emptyListText.gameObject.SetActive(servers.Count == 0);
+                emptyListText.text = "正在搜索局域网房间…";
+            }
+
+            for (int i = 0; i < servers.Count; i++)
+                CreateServerRow(servers[i]);
+        }
+
+        void CreateServerRow(BrawlFoundServer server)
+        {
+            BrawlFoundServer captured = server;
+            Button row = CreateButton(serverListContent, "Server_" + server.ServerId, "", JoinColor, 15);
+            var layout = row.gameObject.AddComponent<LayoutElement>();
+            layout.minHeight = 34f;
+            layout.preferredHeight = 34f;
+            row.onClick.AddListener(() => OnJoinFound(captured));
+
+            Text name = row.GetComponentInChildren<Text>();
+            if (name != null)
+            {
+                name.alignment = TextAnchor.MiddleLeft;
+                name.rectTransform.offsetMin = new Vector2(10f, 0f);
+                name.rectTransform.offsetMax = new Vector2(-88f, 0f);
+                name.text = string.IsNullOrEmpty(server.ServerName) ? server.Address : server.ServerName;
+            }
+
+            Text meta = CreateText(row.transform, "Meta", 12, FontStyle.Normal, TextAnchor.MiddleRight, HintColor);
+            Stretch(meta.rectTransform);
+            meta.rectTransform.offsetMin = new Vector2(0f, 0f);
+            meta.rectTransform.offsetMax = new Vector2(-10f, 0f);
+            int players = Mathf.Max(1, server.PlayerCount);
+            meta.text = players + "人";
         }
 
         void OnStopHost()
@@ -280,7 +396,7 @@ namespace Brawl
             hintText = CreateText(panel, "Hint", 14, FontStyle.Normal, TextAnchor.UpperLeft, HintColor);
             SetRect(hintText.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f),
                 new Vector2(16f, -42f), new Vector2(-32f, 36f));
-            hintText.text = "同一局域网填写主机 IP，点「加入房间」即可";
+            hintText.text = "同一局域网会自动列出房间，点一项即可加入";
             hintText.horizontalOverflow = HorizontalWrapMode.Wrap;
             hintText.verticalOverflow = VerticalWrapMode.Overflow;
 
@@ -290,16 +406,73 @@ namespace Brawl
             connectingRoot.SetActive(false);
             connectedRoot.SetActive(false);
 
+            Text nameLabel = CreateText(disconnectedRoot.transform, "NameLabel", 15, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
+            SetRect(nameLabel.rectTransform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f),
+                new Vector2(16f, -86f), new Vector2(56f, 36f));
+            nameLabel.text = "名称";
+
+            nameField = CreateField(disconnectedRoot.transform, "RoomName", BrawlServerDiscovery.DefaultServerName());
+            nameField.characterLimit = 16;
+            SetRect(nameField.transform as RectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
+                new Vector2(36f, -86f), new Vector2(-88f, 36f));
+
             Button host = CreateButton(disconnectedRoot.transform, "Host", "开房间", HostColor, 18);
-            SetRect(host.transform as RectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(0f, -86f), new Vector2(-32f, 40f));
+            SetRect(host.transform as RectTransform, new Vector2(0f, 1f), new Vector2(0.68f, 1f), new Vector2(0f, 1f),
+                new Vector2(16f, -128f), new Vector2(-8f, 38f));
             host.onClick.AddListener(OnHost);
 
+            Button server = CreateButton(disconnectedRoot.transform, "Server", "仅服务器", ServerColor, 14);
+            SetRect(server.transform as RectTransform, new Vector2(0.68f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
+                new Vector2(-16f, -128f), new Vector2(0f, 38f));
+            server.onClick.AddListener(OnServerOnly);
+
+            Text listLabel = CreateText(disconnectedRoot.transform, "ListLabel", 15, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
+            SetRect(listLabel.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f),
+                new Vector2(16f, -172f), new Vector2(-110f, 24f));
+            listLabel.text = "局域网房间";
+
+            Button refresh = CreateButton(disconnectedRoot.transform, "Refresh", "刷新", ServerColor, 14);
+            SetRect(refresh.transform as RectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
+                new Vector2(-16f, -170f), new Vector2(64f, 26f));
+            refresh.onClick.AddListener(OnRefreshList);
+
+            RectTransform listRoot = CreateRect(disconnectedRoot.transform, "ServerList", new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(0.5f, 1f), new Vector2(0f, -198f), new Vector2(-32f, 148f));
+            Image listBg = listRoot.gameObject.AddComponent<Image>();
+            listBg.color = FieldColor;
+            listBg.raycastTarget = true;
+            listRoot.gameObject.AddComponent<RectMask2D>();
+            ScrollRect scroll = listRoot.gameObject.AddComponent<ScrollRect>();
+            scroll.horizontal = false;
+            scroll.vertical = true;
+            scroll.movementType = ScrollRect.MovementType.Clamped;
+            scroll.scrollSensitivity = 24f;
+            scroll.viewport = listRoot;
+
+            serverListContent = CreateRect(listRoot, "Content", new Vector2(0f, 1f), new Vector2(1f, 1f),
+                new Vector2(0.5f, 1f), Vector2.zero, Vector2.zero);
+            var listLayout = serverListContent.gameObject.AddComponent<VerticalLayoutGroup>();
+            listLayout.childAlignment = TextAnchor.UpperCenter;
+            listLayout.childControlHeight = true;
+            listLayout.childControlWidth = true;
+            listLayout.childForceExpandHeight = false;
+            listLayout.childForceExpandWidth = true;
+            listLayout.spacing = 4f;
+            listLayout.padding = new RectOffset(6, 6, 6, 6);
+            var fitter = serverListContent.gameObject.AddComponent<ContentSizeFitter>();
+            fitter.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+            fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            scroll.content = serverListContent;
+
+            emptyListText = CreateText(listRoot, "Empty", 14, FontStyle.Normal, TextAnchor.MiddleCenter, HintColor);
+            Stretch(emptyListText.rectTransform);
+            emptyListText.text = "正在搜索局域网房间…";
+
             RectTransform joinRow = CreateRect(disconnectedRoot.transform, "JoinRow", new Vector2(0f, 1f), new Vector2(1f, 1f),
-                new Vector2(0.5f, 1f), new Vector2(0f, -134f), new Vector2(-32f, 38f));
-            Button join = CreateButton(joinRow, "Join", "加入房间", JoinColor, 16);
+                new Vector2(0.5f, 1f), new Vector2(0f, -354f), new Vector2(-32f, 36f));
+            Button join = CreateButton(joinRow, "Join", "手动加入", JoinColor, 14);
             SetRect(join.transform as RectTransform, new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(0f, 0.5f),
-                new Vector2(0f, 0f), new Vector2(108f, 0f));
+                new Vector2(0f, 0f), new Vector2(88f, 0f));
             join.onClick.AddListener(OnJoin);
 
             addressField = CreateField(joinRow, "Address", "localhost");
@@ -307,7 +480,7 @@ namespace Brawl
             addressRect.anchorMin = Vector2.zero;
             addressRect.anchorMax = Vector2.one;
             addressRect.pivot = new Vector2(0.5f, 0.5f);
-            addressRect.offsetMin = new Vector2(114f, 0f);
+            addressRect.offsetMin = new Vector2(94f, 0f);
             addressRect.offsetMax = new Vector2(-62f, 0f);
 
             portField = CreateField(joinRow, "Port", "7777");
@@ -316,33 +489,28 @@ namespace Brawl
             SetRect(portField.transform as RectTransform, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(1f, 0.5f),
                 new Vector2(0f, 0f), new Vector2(56f, 0f));
 
-            Button server = CreateButton(disconnectedRoot.transform, "Server", "仅服务器", ServerColor, 15);
-            SetRect(server.transform as RectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(0f, -180f), new Vector2(-32f, 34f));
-            server.onClick.AddListener(OnServerOnly);
-
             Image divider = CreateImage(disconnectedRoot.transform, "Divider", new Color(1f, 1f, 1f, 0.08f), false);
             SetRect(divider.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(0f, -222f), new Vector2(-32f, 1f));
+                new Vector2(0f, -398f), new Vector2(-32f, 1f));
 
             Text botLabel = CreateText(disconnectedRoot.transform, "BotLabel", 15, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
             SetRect(botLabel.rectTransform, new Vector2(0f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, 1f),
-                new Vector2(16f, -230f), new Vector2(120f, 32f));
+                new Vector2(16f, -406f), new Vector2(120f, 32f));
             botLabel.text = "开房 Bot";
 
             Button minus = CreateButton(disconnectedRoot.transform, "BotMinus", "-", ServerColor, 20);
             SetRect(minus.transform as RectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
-                new Vector2(-118f, -230f), new Vector2(32f, 32f));
+                new Vector2(-118f, -406f), new Vector2(32f, 32f));
             minus.onClick.AddListener(OnBotMinus);
 
             botValue = CreateText(disconnectedRoot.transform, "BotValue", 18, FontStyle.Bold, TextAnchor.MiddleCenter, AccentColor);
             SetRect(botValue.rectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
-                new Vector2(-72f, -230f), new Vector2(40f, 32f));
+                new Vector2(-72f, -406f), new Vector2(40f, 32f));
             botValue.text = "1";
 
             Button plus = CreateButton(disconnectedRoot.transform, "BotPlus", "+", ServerColor, 20);
             SetRect(plus.transform as RectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
-                new Vector2(-16f, -230f), new Vector2(32f, 32f));
+                new Vector2(-16f, -406f), new Vector2(32f, 32f));
             plus.onClick.AddListener(OnBotPlus);
 
             connectingLabel = CreateText(connectingRoot.transform, "Label", 16, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);

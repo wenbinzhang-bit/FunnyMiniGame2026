@@ -100,6 +100,7 @@ namespace Brawl
                 manager.offlineScene = BrawlLevelCatalog.LauncherScene;
                 network.AddComponent<NetworkManagerHUD>();
                 network.AddComponent<MiniGameNetworkHook>();
+                BrawlServerDiscovery.Ensure(manager);
             }
 
             if (GetComponentInChildren<BrawlBootstrap>(true) == null)
@@ -308,6 +309,7 @@ namespace Brawl
             manager.dontDestroyOnLoad = false;
             if (manager.GetComponent<MiniGameNetworkHook>() == null)
                 manager.gameObject.AddComponent<MiniGameNetworkHook>();
+            BrawlServerDiscovery.Ensure(manager);
         }
 
         void DestroyLooseDuplicates()
