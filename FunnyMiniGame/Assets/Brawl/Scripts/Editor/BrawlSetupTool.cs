@@ -219,6 +219,7 @@ namespace Brawl.EditorTools
             brawlGm.HoldScoreInterval = 0.5f;
             brawlGm.HoldScorePoints = 1;
             brawlGm.RoundRestartDelay = 6f;
+            brawlGm.WaitingDurationSeconds = 30f;
             Canvas arenaCanvas = Object.FindObjectOfType<Canvas>();
             if (arenaCanvas != null && arenaCanvas.GetComponentInChildren<BrawlMatchHud>(true) == null)
                 BrawlHudSetup.BuildUnderCanvas(arenaCanvas);
@@ -515,6 +516,7 @@ namespace Brawl.EditorTools
                 brawlGm.HoldScoreInterval = 0.5f;
                 brawlGm.HoldScorePoints = 1;
                 brawlGm.RoundRestartDelay = 6f;
+                brawlGm.WaitingDurationSeconds = 30f;
             }
 
             Canvas canvas = Object.FindObjectOfType<Canvas>();
@@ -528,6 +530,9 @@ namespace Brawl.EditorTools
                 CreateSpawnPoint("Spawn_3", new Vector3(-3f, 1.6f, 3f));
                 CreateSpawnPoint("Spawn_4", new Vector3(3f, 1.6f, -3f));
             }
+
+            if (Object.FindObjectOfType<BrawlAirWall>(true) == null)
+                BrawlAirWallSetup.PlaceInActiveScene();
 
             if (GameObject.Find("SpectatorIsland") == null)
                 CreateBlock("SpectatorIsland", new Vector3(60f, -0.5f, 60f), new Vector3(12f, 1f, 12f), isStatic: true);

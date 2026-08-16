@@ -722,6 +722,13 @@ namespace Brawl
         }
 
         [Command]
+        public void CmdRequestNextRound()
+        {
+            if (BrawlGameManager.Instance != null)
+                BrawlGameManager.Instance.ServerOnNextRoundRequested();
+        }
+
+        [Command]
         void CmdReleaseHeldObject()
         {
             try

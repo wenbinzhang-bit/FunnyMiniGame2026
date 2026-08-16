@@ -141,8 +141,8 @@ namespace Brawl.EditorTools
         static void CreateControls(Transform parent, Font font)
         {
             Text hint = CreateText(parent, "Controls", 18, TextAnchor.LowerLeft, new Color(1f, 1f, 1f, 0.88f), font);
-            hint.text = "W S A D : Movement\nSpace : Jump\nLeft Click : Punch\nHold Right Click : Pick Up Laptop\nRelease Right Click : Put Down\nEsc : Release Mouse";
-            SetRect(hint.rectTransform, new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(24f, 220f), new Vector2(460f, 170f));
+            hint.text = "W S A D : Movement\nSpace : Jump\nLeft Click : Punch\nHold Right Click : Pick Up Laptop\nRelease Right Click : Put Down\nEsc : 退出鼠标捕获\nAlt : 重新捕获鼠标";
+            SetRect(hint.rectTransform, new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(24f, 220f), new Vector2(460f, 196f));
         }
 
         static void CreateRanking(Transform parent, BrawlMatchHud hud, Sprite uiSprite, Font font)

@@ -62,6 +62,9 @@ namespace FIMSpace.Basics
         [Tooltip("取消后右键不再用来锁定鼠标,留给玩法(例如松手)")]
         public bool RightClickToLockCursor = true;
 
+        [Tooltip("取消后本脚本不再处理 Esc/右键锁鼠标，交给外部（例如 LocalCameraRig）")]
+        public bool HandleCursorHotkeys = true;
+
         /// <summary> Just to make turning off lock cursor less annoying </summary>
         private bool rotateCamera = true;
 
@@ -134,13 +137,21 @@ namespace FIMSpace.Basics
             UpdateMethods();
         }
 
+        public void SetRotateCamera(bool enabled)
+        {
+            rotateCamera = enabled;
+        }
+
         private void Update()
         {
-            if (RightClickToLockCursor && Input.GetMouseButtonDown(1))
-                if (Cursor.lockState != CursorLockMode.Locked) HelperSwitchCursor();
+            if (HandleCursorHotkeys)
+            {
+                if (RightClickToLockCursor && Input.GetMouseButtonDown(1))
+                    if (Cursor.lockState != CursorLockMode.Locked) HelperSwitchCursor();
 
-            if (Input.GetKeyDown(KeyCode.Escape))
-                if (Cursor.lockState == CursorLockMode.Locked) HelperSwitchCursor();
+                if (Input.GetKeyDown(KeyCode.Escape))
+                    if (Cursor.lockState == CursorLockMode.Locked) HelperSwitchCursor();
+            }
 
             if (UpdateClock != EFUpdateClock.Update) return;
             UpdateMethods();

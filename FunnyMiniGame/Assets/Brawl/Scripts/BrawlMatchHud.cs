@@ -38,6 +38,10 @@ namespace Brawl
         [Header("Other")]
         public GameObject RankingRoot;
         public Text RankingBody;
+        public Text ControlsText;
+        public Text CursorHintText;
+        public Button NextRoundButton;
+        public Text NextRoundLabel;
 
         [Header("Colors")]
         public Color IdleFrameColor = new Color(0.08f, 0.08f, 0.08f, 0.72f);
@@ -70,6 +74,8 @@ namespace Brawl
         {
             HideLegacyHealthUi();
             EnsureTurboVisuals();
+            EnsureCursorHint();
+            EnsureNextRoundButton();
             ApplyCjkFont();
             CacheTimerVisuals();
             EnsureBeepSource();
@@ -93,10 +99,19 @@ namespace Brawl
             if (TimerText != null)
                 TimerText.text = FormatTime(remaining);
 
-            ApplyTimerWarning(gm != null && gm.HudIsPlaying, remaining);
+            ApplyTimerWarning(gm != null && (gm.HudIsPlaying || gm.HudIsWaiting || gm.HudIsRoundEnd), remaining);
 
             if (StatusText != null)
-                StatusText.text = TrimStatus(gm != null ? gm.HudStatusText : "");
+            {
+                if (gm != null && gm.HudIsWaiting)
+                    StatusText.text = $"空气墙倒计时 {FormatTime(remaining)} 后消失";
+                else if (gm != null && gm.HudIsRoundEnd)
+                    StatusText.text = gm.HudContinueRequested
+                        ? "已确认下一局，继续当前玩法"
+                        : $"点击「下一局」继续，否则 {FormatTime(remaining)} 后结束";
+                else
+                    StatusText.text = TrimStatus(gm != null ? gm.HudStatusText : "");
+            }
 
             int slotCount = Slots != null ? Slots.Length : 0;
             for (int i = 0; i < slotCount; i++)
@@ -104,6 +119,8 @@ namespace Brawl
 
             BindLocalTurbo();
             BindRanking(gm);
+            BindNextRoundButton(gm);
+            BindCursorHint();
         }
 
         void BindSlot(PlayerSlot slot, int index, IBrawlPlayer player, int scoreMax)
@@ -268,6 +285,146 @@ namespace Brawl
             TurboValue.raycastTarget = false;
             TurboValue.text = "5.0s";
             Outline outline = valueObject.AddComponent<Outline>();
+            outline.effectColor = new Color(0f, 0f, 0f, 0.75f);
+            outline.effectDistance = new Vector2(1f, -1f);
+        }
+
+        void BindNextRoundButton(BrawlGameManager gm)
+        {
+            bool show = gm != null && gm.HudIsRoundEnd;
+            if (NextRoundButton != null)
+                NextRoundButton.gameObject.SetActive(show);
+            if (!show || NextRoundLabel == null) return;
+
+            bool requested = gm.HudContinueRequested;
+            NextRoundButton.interactable = !requested;
+            NextRoundLabel.text = requested ? "已确认" : "下一局";
+        }
+
+        void OnNextRoundClicked()
+        {
+            if (BrawlGameManager.Instance != null)
+                BrawlGameManager.Instance.RequestNextRound();
+        }
+
+        void EnsureNextRoundButton()
+        {
+            if (NextRoundButton != null && NextRoundLabel != null) return;
+
+            Transform existing = transform.Find("NextRound");
+            if (existing != null)
+            {
+                NextRoundButton = existing.GetComponent<Button>();
+                NextRoundLabel = existing.Find("Label")?.GetComponent<Text>();
+                if (NextRoundButton != null && NextRoundLabel != null)
+                {
+                    NextRoundButton.onClick.RemoveListener(OnNextRoundClicked);
+                    NextRoundButton.onClick.AddListener(OnNextRoundClicked);
+                    NextRoundButton.gameObject.SetActive(false);
+                    return;
+                }
+            }
+
+            Font fallbackFont = TimerText != null && TimerText.font != null
+                ? TimerText.font
+                : Resources.GetBuiltinResource<Font>("Arial.ttf");
+
+            GameObject buttonObject = new GameObject("NextRound", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+            RectTransform buttonRect = buttonObject.GetComponent<RectTransform>();
+            buttonRect.SetParent(transform, false);
+            buttonRect.anchorMin = new Vector2(0.5f, 0.5f);
+            buttonRect.anchorMax = new Vector2(0.5f, 0.5f);
+            buttonRect.pivot = new Vector2(0.5f, 0.5f);
+            buttonRect.anchoredPosition = new Vector2(0f, -150f);
+            buttonRect.sizeDelta = new Vector2(220f, 56f);
+            Image image = buttonObject.GetComponent<Image>();
+            image.color = new Color(0.16f, 0.72f, 0.38f, 0.96f);
+            image.raycastTarget = true;
+            NextRoundButton = buttonObject.GetComponent<Button>();
+            NextRoundButton.onClick.AddListener(OnNextRoundClicked);
+
+            GameObject labelObject = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+            RectTransform labelRect = labelObject.GetComponent<RectTransform>();
+            labelRect.SetParent(buttonRect, false);
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+            NextRoundLabel = labelObject.GetComponent<Text>();
+            NextRoundLabel.font = fallbackFont;
+            NextRoundLabel.fontSize = 26;
+            NextRoundLabel.fontStyle = FontStyle.Bold;
+            NextRoundLabel.alignment = TextAnchor.MiddleCenter;
+            NextRoundLabel.color = Color.white;
+            NextRoundLabel.raycastTarget = false;
+            NextRoundLabel.text = "下一局";
+            Outline outline = labelObject.AddComponent<Outline>();
+            outline.effectColor = new Color(0f, 0f, 0f, 0.7f);
+            outline.effectDistance = new Vector2(1f, -1f);
+            buttonObject.SetActive(false);
+        }
+
+        void BindCursorHint()
+        {
+            if (CursorHintText == null) return;
+            CursorHintText.text = LocalCameraRig.IsCursorCaptured
+                ? "Esc  退出鼠标捕获"
+                : "Alt  重新捕获鼠标";
+            CursorHintText.color = LocalCameraRig.IsCursorCaptured
+                ? new Color(1f, 1f, 1f, 0.88f)
+                : new Color(1f, 0.86f, 0.28f, 1f);
+        }
+
+        void EnsureCursorHint()
+        {
+            const string controlsHint =
+                "W S A D : Movement\nSpace : Jump\nLeft Click : Punch\nHold Right Click : Pick Up Laptop\nRelease Right Click : Put Down\nEsc : 退出鼠标捕获\nAlt : 重新捕获鼠标";
+
+            if (ControlsText == null)
+            {
+                Transform controls = transform.Find("Controls");
+                if (controls != null) ControlsText = controls.GetComponent<Text>();
+            }
+
+            if (ControlsText != null)
+            {
+                ControlsText.text = controlsHint;
+                RectTransform controlsRect = ControlsText.rectTransform;
+                if (controlsRect.sizeDelta.y < 196f)
+                    controlsRect.sizeDelta = new Vector2(Mathf.Max(460f, controlsRect.sizeDelta.x), 196f);
+            }
+
+            if (CursorHintText == null)
+            {
+                Transform existing = transform.Find("CursorHint");
+                if (existing != null) CursorHintText = existing.GetComponent<Text>();
+            }
+
+            if (CursorHintText != null) return;
+
+            Font fallbackFont = TimerText != null && TimerText.font != null
+                ? TimerText.font
+                : Resources.GetBuiltinResource<Font>("Arial.ttf");
+
+            GameObject hintObject = new GameObject("CursorHint", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+            RectTransform hintRect = hintObject.GetComponent<RectTransform>();
+            hintRect.SetParent(transform, false);
+            hintRect.anchorMin = new Vector2(1f, 0f);
+            hintRect.anchorMax = new Vector2(1f, 0f);
+            hintRect.pivot = new Vector2(1f, 0f);
+            hintRect.anchoredPosition = new Vector2(-24f, 24f);
+            hintRect.sizeDelta = new Vector2(280f, 36f);
+            CursorHintText = hintObject.GetComponent<Text>();
+            CursorHintText.font = fallbackFont;
+            CursorHintText.fontSize = 18;
+            CursorHintText.fontStyle = FontStyle.Bold;
+            CursorHintText.alignment = TextAnchor.MiddleRight;
+            CursorHintText.color = Color.white;
+            CursorHintText.raycastTarget = false;
+            CursorHintText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            CursorHintText.verticalOverflow = VerticalWrapMode.Overflow;
+            CursorHintText.text = "Esc  退出鼠标捕获";
+            Outline outline = hintObject.AddComponent<Outline>();
             outline.effectColor = new Color(0f, 0f, 0f, 0.75f);
             outline.effectDistance = new Vector2(1f, -1f);
         }

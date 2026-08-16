@@ -7,6 +7,7 @@ namespace Brawl
 {
     /// <summary>
     /// MiniGame_01 服务端权威对局:
+    /// 进场后空气墙困住玩家，30 秒等待倒计时结束再开局；
     /// 持有电脑每 0.5 秒得分；被打后电脑落地、持有者被打飞；倒计时结束按分数排名。
     /// 掉出场地会回出生点，不淘汰；受击只触发布娃娃倒地和起身。
     /// </summary>
@@ -20,8 +21,11 @@ namespace Brawl
         [Tooltip("兼容旧场景字段，本玩法不再把玩家送去观战岛")]
         public Vector3 SpectatorIsland = new Vector3(60f, 3f, 60f);
 
-        [Tooltip("回合结束后到下一回合的间隔秒数")]
-        public float RoundRestartDelay = 6f;
+        [Tooltip("回合结束后选择下一局的倒计时，超时未点则结束对局")]
+        [Min(1f)] public float ContinueDecisionSeconds = 30f;
+
+        [Tooltip("兼容旧字段，结算等待改用 ContinueDecisionSeconds")]
+        public float RoundRestartDelay = 30f;
 
         [Tooltip("一回合倒计时秒数")]
         [Min(5f)] public float RoundDurationSeconds = 60f;
@@ -38,10 +42,19 @@ namespace Brawl
         [Tooltip("得分上限，也是进度条满分。任一玩家达到后立即结束并按当前分数结算")]
         [Min(1)] public int HudScoreMax = 99;
 
+        [Tooltip("进场后空气墙持续时间，倒计时结束且人数足够后开局并撤墙")]
+        [Min(1f)] public float WaitingDurationSeconds = 30f;
+
+        [Tooltip("场景里的空气墙实体，可在 Hierarchy 里拖墙调整")]
+        public BrawlAirWall AirWall;
+
         enum EState : byte { Waiting, Playing, RoundEnd }
 
         public bool HudIsPlaying => state == EState.Playing;
+        public bool HudIsWaiting => state == EState.Waiting;
         public bool HudIsRoundEnd => state == EState.RoundEnd;
+        public bool HudAirWallActive => airWallActive;
+        public bool HudContinueRequested => nextRoundRequested;
         public string HudStatusText => statusText;
         public float HudRemainingSeconds
         {
@@ -49,13 +62,29 @@ namespace Brawl
             {
                 if (state == EState.Playing)
                     return Mathf.Max(0f, (float)(roundEndsAt - NetworkTime.time));
-                return state == EState.Waiting ? RoundDurationSeconds : 0f;
+                if (state == EState.Waiting)
+                {
+                    if (waitingEndsAt > 0)
+                        return Mathf.Max(0f, (float)(waitingEndsAt - NetworkTime.time));
+                    return WaitingDurationSeconds;
+                }
+                if (state == EState.RoundEnd)
+                {
+                    if (continueEndsAt > 0)
+                        return Mathf.Max(0f, (float)(continueEndsAt - NetworkTime.time));
+                    return ContinueDecisionSeconds;
+                }
+                return 0f;
             }
         }
 
         [SyncVar] EState state = EState.Waiting;
         [SyncVar] string statusText = "";
         [SyncVar] double roundEndsAt;
+        [SyncVar] double waitingEndsAt;
+        [SyncVar] double continueEndsAt;
+        [SyncVar] bool nextRoundRequested;
+        [SyncVar(hook = nameof(OnAirWallActiveChanged))] bool airWallActive = true;
         [SyncVar] string rankText = "";
 
         class PlayerEntry
@@ -66,11 +95,24 @@ namespace Brawl
 
         readonly List<PlayerEntry> players = new List<PlayerEntry>();
         double nextScoreTime;
-        double roundEndTime;
+        bool stoppingSession;
 
         void Awake()
         {
             Instance = this;
+            ApplyAirWall();
+        }
+
+        public override void OnStartServer()
+        {
+            base.OnStartServer();
+            ServerEnterWaiting(false);
+        }
+
+        public override void OnStartClient()
+        {
+            base.OnStartClient();
+            ApplyAirWall();
         }
 
         void OnDestroy()
@@ -125,33 +167,110 @@ namespace Brawl
                     ServerUpdatePlaying();
                     break;
                 case EState.RoundEnd:
-                    if (NetworkTime.time >= roundEndTime)
-                    {
-                        if (players.Count >= MinPlayersToStart) ServerStartRound();
-                        else { state = EState.Waiting; rankText = ""; }
-                    }
+                    ServerUpdateRoundEnd();
                     break;
             }
+        }
+
+        [Server]
+        void ServerEnterWaiting(bool resetRank)
+        {
+            state = EState.Waiting;
+            waitingEndsAt = NetworkTime.time + Mathf.Max(1f, WaitingDurationSeconds);
+            if (resetRank) rankText = "";
+            ServerSetAirWall(true);
+            statusText = $"空气墙倒计时 {FormatTime(WaitingDurationSeconds)} 后消失";
+            Debug.Log($"BRAWL_SMOKE: WAITING_STARTED duration={WaitingDurationSeconds}");
         }
 
         [Server]
         void ServerUpdateWaiting()
         {
             foreach (var p in players)
+            {
                 ServerRescueIfNeeded(p);
+                ServerContainInAirWall(p);
+            }
 
             ServerRescueLooseComputers();
-            ServerTickHoldScores();
             rankText = RankLine();
-            statusText = $"等待玩家加入 ({players.Count}/{MinPlayersToStart})... 满 {MinPlayersToStart} 人自动开局 | 持电脑每{HoldScoreInterval:0.##}秒得分，倒计时结束后按分数排名";
 
-            if (players.Count >= MinPlayersToStart) ServerStartRound();
+            if (waitingEndsAt <= 0)
+                waitingEndsAt = NetworkTime.time + Mathf.Max(1f, WaitingDurationSeconds);
+
+            ServerSetAirWall(true);
+            float remain = Mathf.Max(0f, (float)(waitingEndsAt - NetworkTime.time));
+            statusText = $"空气墙倒计时 {FormatTime(remain)} 后消失  玩家 {players.Count}/{MinPlayersToStart}";
+
+            if (remain <= 0f && players.Count >= MinPlayersToStart)
+                ServerStartRound();
+        }
+
+        [Server]
+        void ServerUpdateRoundEnd()
+        {
+            if (stoppingSession) return;
+
+            if (nextRoundRequested)
+            {
+                nextRoundRequested = false;
+                ServerEnterWaiting(true);
+                return;
+            }
+
+            float remain = Mathf.Max(0f, (float)(continueEndsAt - NetworkTime.time));
+            statusText = $"点击「下一局」继续当前玩法，否则 {FormatTime(remain)} 后结束";
+            if (remain <= 0f)
+                ServerStopSession();
+        }
+
+        public void RequestNextRound()
+        {
+            if (!HudIsRoundEnd || nextRoundRequested) return;
+
+            if (isServer)
+            {
+                ServerOnNextRoundRequested();
+                return;
+            }
+
+            NetFAnnequinController local = NetworkClient.localPlayer != null
+                ? NetworkClient.localPlayer.GetComponent<NetFAnnequinController>()
+                : null;
+            if (local != null)
+                local.CmdRequestNextRound();
+        }
+
+        [Server]
+        public void ServerOnNextRoundRequested()
+        {
+            if (state != EState.RoundEnd || nextRoundRequested || stoppingSession) return;
+            nextRoundRequested = true;
+            statusText = "已确认下一局，继续当前玩法";
+            Debug.Log("BRAWL_SMOKE: NEXT_ROUND_REQUESTED");
+        }
+
+        [Server]
+        void ServerStopSession()
+        {
+            if (stoppingSession) return;
+            stoppingSession = true;
+            statusText = "未选择下一局，对局结束";
+            Debug.Log("BRAWL_SMOKE: SESSION_STOPPED");
+
+            if (NetworkManager.singleton == null) return;
+            if (NetworkServer.active && NetworkClient.active)
+                NetworkManager.singleton.StopHost();
+            else if (NetworkServer.active)
+                NetworkManager.singleton.StopServer();
         }
 
         [Server]
         void ServerStartRound()
         {
             state = EState.Playing;
+            waitingEndsAt = 0;
+            ServerSetAirWall(false);
             roundEndsAt = NetworkTime.time + RoundDurationSeconds;
             nextScoreTime = NetworkTime.time + HoldScoreInterval;
             Debug.Log($"BRAWL_SMOKE: ROUND_STARTED players={players.Count} duration={RoundDurationSeconds}");
@@ -222,7 +341,8 @@ namespace Brawl
         {
             state = EState.RoundEnd;
             roundEndsAt = 0;
-            roundEndTime = NetworkTime.time + RoundRestartDelay;
+            nextRoundRequested = false;
+            continueEndsAt = NetworkTime.time + Mathf.Max(1f, ContinueDecisionSeconds);
 
             foreach (var p in players)
                 p.motor.InputActive = false;
@@ -236,7 +356,7 @@ namespace Brawl
             string reason = reachedScoreCap
                 ? $"{PlayerLabel(capWinnerNetId)} 达到 {HudScoreMax} 分!"
                 : "时间到!";
-            statusText = $"{reason} {winner}  |  {RoundRestartDelay:0} 秒后开新回合";
+            statusText = $"{reason} {winner}  |  点击「下一局」继续，否则 {ContinueDecisionSeconds:0} 秒后结束";
             Debug.Log($"BRAWL_SMOKE: ROUND_ENDED {statusText} | {rankText}");
         }
 
@@ -316,8 +436,53 @@ namespace Brawl
             Vector3 spawn = p.motor.SpawnPosition;
             if (spawn.sqrMagnitude < 0.01f)
                 spawn = new Vector3(0f, 3f, 0f);
-            p.motor.ServerTeleport(spawn + Vector3.up * 1f);
+            Vector3 dest = spawn + Vector3.up * 1f;
+            if (airWallActive)
+            {
+                BrawlAirWall wall = BrawlAirWall.Ensure(this);
+                if (wall != null && !wall.Contains(dest))
+                    dest = wall.ClampInside(dest);
+            }
+            p.motor.ServerTeleport(dest);
             p.motor.InputActive = state == EState.Playing || state == EState.Waiting;
+        }
+
+        [Server]
+        void ServerContainInAirWall(PlayerEntry p)
+        {
+            if (!airWallActive || p?.motor == null || p.motor.Transform == null) return;
+
+            BrawlAirWall wall = BrawlAirWall.Ensure(this);
+            if (wall == null) return;
+            Vector3 pos = p.motor.Transform.position;
+            if (wall.Contains(pos)) return;
+            p.motor.ServerTeleport(wall.ClampInside(pos));
+        }
+
+        [Server]
+        void ServerSetAirWall(bool active)
+        {
+            if (airWallActive == active) return;
+            airWallActive = active;
+            ApplyAirWall();
+            Debug.Log($"BRAWL_SMOKE: AIR_WALL {(active ? "ON" : "OFF")}");
+        }
+
+        void OnAirWallActiveChanged(bool _, bool __)
+        {
+            ApplyAirWall();
+        }
+
+        void ApplyAirWall()
+        {
+            BrawlAirWall wall = BrawlAirWall.Ensure(this);
+            if (wall == null)
+            {
+                Debug.LogWarning("BrawlGameManager: 场景里没有 AirWall，请在 MiniGame_01 放置空气墙实体");
+                return;
+            }
+
+            wall.SetActiveWall(airWallActive);
         }
 
         [Server]

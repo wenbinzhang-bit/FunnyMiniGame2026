@@ -49,6 +49,12 @@ namespace Brawl
                 return;
             }
 
+            if (BrawlGameManager.Instance != null && !BrawlGameManager.Instance.HudIsPlaying)
+            {
+                self.ServerBotSetMove(Vector3.zero);
+                return;
+            }
+
             if (self.IsHoldingComputer)
             {
                 self.ServerBotSetMove(FleeDir(), true);

@@ -26,6 +26,8 @@ namespace Brawl
 
         void Update()
         {
+            if (!LocalCameraRig.IsCursorCaptured) return;
+
             if (Input.GetMouseButtonDown(0) && !pickupButtonHeld)
                 OnShortPressAttack?.Invoke();
 

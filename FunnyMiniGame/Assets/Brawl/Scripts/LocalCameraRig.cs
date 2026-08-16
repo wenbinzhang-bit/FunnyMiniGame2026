@@ -1,15 +1,17 @@
 using FIMSpace.Basics;
 using Mirror;
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 namespace Brawl
 {
     /// <summary>
     /// 仅本地玩家:把场景主相机接上 FBasic 第三人称轨道相机并跟随自己。
-    /// 相机纯本地,不参与网络同步。开局默认捕获鼠标,Esc 释放,再点窗口重新捕获。
+    /// 相机纯本地,不参与网络同步。开局默认捕获鼠标,Esc 释放；Alt 或点空白处重新捕获，点 UI 不抢鼠标。
     /// </summary>
     public class LocalCameraRig : NetworkBehaviour
     {
+        public static bool IsCursorCaptured { get; private set; } = true;
         public Vector3 FollowOffset = new Vector3(0f, 1.2f, 0f);
         public Vector2 DistanceRanges = new Vector2(2.5f, 8f);
 
@@ -50,19 +52,43 @@ namespace Brawl
             tpp.MinimumHeightAboveFollowPoint = MinimumHeightAboveFollowPoint;
             tpp.VerticalFollowSmoothTime = VerticalFollowSmoothTime;
             tpp.VerticalFollowDeadZone = VerticalFollowDeadZone;
-            tpp.LockCursor = true;
+            tpp.LockCursor = false;
             tpp.RightClickToLockCursor = false;
+            tpp.HandleCursorHotkeys = false;
             tpp.enabled = true;
+            tppCamera = tpp;
 
             releasedByUser = false;
             LockCursor();
         }
 
+        FBasic_TPPCameraBehaviour tppCamera;
+
         bool releasedByUser;
+        bool wasRoundEnd;
 
         void Update()
         {
             if (!isLocalPlayer) return;
+
+            BrawlGameManager gm = BrawlGameManager.Instance;
+            if (gm != null && gm.HudIsRoundEnd)
+            {
+                if (IsCursorCaptured)
+                {
+                    releasedByUser = true;
+                    UnlockCursor();
+                }
+                wasRoundEnd = true;
+                return;
+            }
+
+            if (wasRoundEnd)
+            {
+                wasRoundEnd = false;
+                releasedByUser = false;
+                LockCursor();
+            }
 
             if (Input.GetKeyDown(KeyCode.Escape))
             {
@@ -71,23 +97,51 @@ namespace Brawl
                 return;
             }
 
-            if (releasedByUser && Application.isFocused && Input.GetMouseButtonDown(0))
+            if (!releasedByUser || !Application.isFocused) return;
+
+            bool pressAlt = Input.GetKeyDown(KeyCode.LeftAlt) || Input.GetKeyDown(KeyCode.RightAlt);
+            bool clickEmpty = Input.GetMouseButtonDown(0) && !IsPointerOverUi();
+            if (pressAlt || clickEmpty)
             {
                 releasedByUser = false;
                 LockCursor();
             }
         }
 
-        static void LockCursor()
+        void LockCursor()
         {
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
+            IsCursorCaptured = true;
+            if (tppCamera != null) tppCamera.SetRotateCamera(true);
         }
 
-        static void UnlockCursor()
+        void UnlockCursor()
         {
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
+            IsCursorCaptured = false;
+            if (tppCamera != null) tppCamera.SetRotateCamera(false);
+        }
+
+        static bool IsPointerOverUi()
+        {
+            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
+                return true;
+
+            Vector2 guiMouse = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
+            NetworkManagerHUD hud = NetworkManager.singleton != null
+                ? NetworkManager.singleton.GetComponent<NetworkManagerHUD>()
+                : null;
+            if (hud != null && hud.enabled)
+            {
+                int height = NetworkClient.isConnected || NetworkServer.active ? 120 : 240;
+                var hudRect = new Rect(10 + hud.offsetX, 40 + hud.offsetY, 300, height);
+                if (hudRect.Contains(guiMouse)) return true;
+            }
+
+            var lobbyRect = new Rect(250f, Screen.height - 88f, 228f, 72f);
+            return lobbyRect.Contains(guiMouse);
         }
 
         public override void OnStopLocalPlayer()
@@ -100,6 +154,7 @@ namespace Brawl
 
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
+            IsCursorCaptured = false;
         }
     }
 }
