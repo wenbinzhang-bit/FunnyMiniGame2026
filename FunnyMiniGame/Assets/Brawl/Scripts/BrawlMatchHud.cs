@@ -95,6 +95,8 @@ namespace Brawl
         public Text RulesBody;
         public Text RulesCountdown;
         public RawImage RulesArtwork;
+        Image rulesTimingHintBack;
+        Text rulesTimingHint;
         public RectTransform PassCrosshairRoot;
         public Image[] PassCrosshairMarks;
 
@@ -348,6 +350,8 @@ namespace Brawl
                     StatusText.text = gm.HudContinueRequested
                         ? (gm.HudHasNextLevel ? "已确认下一关" : "已确认查看总成绩")
                         : $"点击「{(gm.HudHasNextLevel ? "下一关" : "查看总成绩")}」或按 Enter 继续，否则 {FormatTime(remaining)} 后自动继续";
+                else if (BrawlLevelCatalog.ActiveSceneIsLevel())
+                    StatusText.text = LocalHolderLine(gm);
                 else
                     StatusText.text = TrimStatus(gm != null ? gm.HudStatusText : "");
 
@@ -364,6 +368,7 @@ namespace Brawl
             BindNextRoundButton(gm);
             BindLobbyButton(gm);
             BindRulesPanel(gm);
+            BindControlsHint(gm);
             BindCursorHint();
             BindPassCrosshair(gm);
             if (NextRoundButton != null && NextRoundButton.gameObject.activeSelf)
@@ -620,7 +625,7 @@ namespace Brawl
 
             roundResultCountdown = CreateResultText(root, "Countdown", fallbackFont, 23, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(1f, 0.82f, 0.20f, 1f), true);
             SetHudRect(roundResultCountdown.rectTransform, new Vector2(0.30f, 0.015f), new Vector2(0.70f, 0.07f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
-            roundResultCountdown.text = "15s后自动进入下一关";
+            roundResultCountdown.text = "10s后自动进入下一关";
             rootObject.SetActive(false);
         }
 
@@ -1841,18 +1846,24 @@ namespace Brawl
             if (RulesRoot != null)
                 RulesRoot.transform.SetAsLastSibling();
 
+            Transform card = RulesRoot != null ? RulesRoot.transform.Find("Card") : null;
+            if (card is RectTransform ensureCard)
+                EnsureRulesArtwork(ensureCard);
+
             RefreshRulesArtwork();
             bool illustrated = ShouldUseIllustratedRules();
             if (RulesArtwork != null)
                 RulesArtwork.gameObject.SetActive(illustrated);
             if (rulesCountdownBackdrop != null)
                 rulesCountdownBackdrop.gameObject.SetActive(illustrated);
+            bool showTimingHint = illustrated && BrawlLevelCatalog.GetLevelIndex(BrawlLevelCatalog.ActiveSceneName()) == 2;
+            if (rulesTimingHintBack != null)
+                rulesTimingHintBack.gameObject.SetActive(showTimingHint);
             if (RulesTitle != null)
                 RulesTitle.gameObject.SetActive(!illustrated);
             if (RulesBody != null)
                 RulesBody.gameObject.SetActive(!illustrated);
 
-            Transform card = RulesRoot != null ? RulesRoot.transform.Find("Card") : null;
             Transform accent = card != null ? card.Find("Accent") : null;
             if (accent != null)
                 accent.gameObject.SetActive(!illustrated);
@@ -2081,6 +2092,49 @@ namespace Brawl
             rulesCountdownBackdrop.color = new Color(0.025f, 0.027f, 0.032f, 1f);
             rulesCountdownBackdrop.raycastTarget = false;
             rulesCountdownBackdrop.transform.SetSiblingIndex(1);
+
+            Transform timingTransform = cardRect.Find("TimingHint");
+            if (timingTransform == null)
+            {
+                GameObject timingObject = new GameObject("TimingHint", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                timingTransform = timingObject.transform;
+                timingTransform.SetParent(cardRect, false);
+            }
+
+            rulesTimingHintBack = timingTransform.GetComponent<Image>();
+            if (rulesTimingHintBack == null)
+                rulesTimingHintBack = timingTransform.gameObject.AddComponent<Image>();
+            SetHudRect(
+                rulesTimingHintBack.rectTransform,
+                new Vector2(0.058f, 0.172f),
+                new Vector2(0.452f, 0.228f),
+                new Vector2(0.5f, 0.5f),
+                Vector2.zero,
+                Vector2.zero);
+            rulesTimingHintBack.color = new Color(0.10f, 0.07f, 0.04f, 0.96f);
+            rulesTimingHintBack.raycastTarget = false;
+            rulesTimingHintBack.gameObject.SetActive(false);
+
+            Transform timingLabel = timingTransform.Find("Label");
+            if (timingLabel == null)
+            {
+                Font fallbackFont = TimerText != null && TimerText.font != null
+                    ? TimerText.font
+                    : Resources.GetBuiltinResource<Font>("Arial.ttf");
+                rulesTimingHint = CreatePlainText(timingTransform, "Label", fallbackFont, 22, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(1f, 0.78f, 0.22f, 1f));
+            }
+            else
+            {
+                rulesTimingHint = timingLabel.GetComponent<Text>();
+            }
+
+            if (rulesTimingHint != null)
+            {
+                SetHudRect(rulesTimingHint.rectTransform, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+                rulesTimingHint.text = "随机5~30秒会爆炸";
+                rulesTimingHint.horizontalOverflow = HorizontalWrapMode.Overflow;
+                rulesTimingHint.verticalOverflow = VerticalWrapMode.Overflow;
+            }
         }
 
         static Text CreatePlainText(Transform parent, string name, Font font, int size, FontStyle style, TextAnchor align, Color color)
@@ -2247,6 +2301,15 @@ namespace Brawl
             LevelHintText.text = "第1/3关";
             LevelHintText.horizontalOverflow = HorizontalWrapMode.Overflow;
             LevelHintText.verticalOverflow = VerticalWrapMode.Overflow;
+        }
+
+        void BindControlsHint(BrawlGameManager gm)
+        {
+            if (ControlsText == null) return;
+            bool passTheBuck = (gm != null && gm.IsPassTheBuck) || BrawlGameManager.PassTheBuckActive;
+            ControlsText.text = passTheBuck
+                ? "W S A D : 移动\nSpace : 跳跃\nLeft Click : 攻击\nRight Click : 甩锅\n锅随机 5~30 秒爆炸\nEsc : 退出鼠标捕获\nAlt : 重新捕获鼠标"
+                : "W S A D : 移动\nSpace : 跳跃\nLeft Click : 攻击\nHold Right Click : 长按抓取\nRelease Right Click : 松开放下\nEsc : 退出鼠标捕获\nAlt : 重新捕获鼠标";
         }
 
         void BindCursorHint()
@@ -2718,6 +2781,47 @@ namespace Brawl
             if (string.IsNullOrEmpty(status)) return "";
             int cut = status.IndexOf('|');
             return cut > 0 ? status.Substring(0, cut).Trim() : status;
+        }
+
+        string LocalHolderLine(BrawlGameManager gm)
+        {
+            bool passTheBuck = (gm != null && gm.IsPassTheBuck) || BrawlGameManager.PassTheBuckActive;
+            var names = new List<string>();
+            KpiComputerObjective[] computers = FindObjectsOfType<KpiComputerObjective>();
+            for (int i = 0; i < computers.Length; i++)
+            {
+                KpiComputerObjective computer = computers[i];
+                if (computer == null || !computer.IsHeld) continue;
+                string name = BrawlHudNames.Label(computer.HolderNetId, hudPlayers);
+                if (!string.IsNullOrEmpty(name) && !names.Contains(name))
+                    names.Add(name);
+            }
+
+            if (names.Count == 0)
+            {
+                for (int i = 0; i < hudPlayers.Count; i++)
+                {
+                    if (hudPlayers[i] is NetFAnnequinController fan && fan.IsHoldingComputer && !fan.IsDead)
+                    {
+                        string name = BrawlHudNames.Label(fan.NetId, hudPlayers);
+                        if (!string.IsNullOrEmpty(name) && !names.Contains(name))
+                            names.Add(name);
+                    }
+                }
+            }
+
+            if (passTheBuck)
+            {
+                if (names.Count == 0) return "锅还没人背";
+                return names.Count == 1
+                    ? $"{names[0]} 正在背锅"
+                    : string.Join("、", names) + " 正在背锅";
+            }
+
+            if (names.Count == 0) return "电脑无人持有";
+            return names.Count == 1
+                ? $"{names[0]} 持有电脑"
+                : string.Join("、", names) + " 持有电脑";
         }
 
         static string FormatTime(float seconds)

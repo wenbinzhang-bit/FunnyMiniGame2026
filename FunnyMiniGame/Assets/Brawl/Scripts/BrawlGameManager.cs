@@ -14,7 +14,7 @@ namespace Brawl
     public class BrawlGameManager : NetworkBehaviour
     {
         const float RulesIntroDurationSeconds = 10f;
-        const float RoundResultDurationSeconds = 15f;
+        const float RoundResultDurationSeconds = 10f;
 
         public static BrawlGameManager Instance { get; private set; }
 
@@ -24,7 +24,7 @@ namespace Brawl
         [Tooltip("兼容旧场景字段，本玩法不再把玩家送去观战岛")]
         public Vector3 SpectatorIsland = new Vector3(60f, 3f, 60f);
 
-        [Tooltip("回合结算页自动进入下一关的倒计时；当前流程固定为 15 秒")]
+        [Tooltip("回合结算页自动进入下一关的倒计时；当前流程固定为 10 秒")]
         [Min(1f)] public float ContinueDecisionSeconds = RoundResultDurationSeconds;
 
         [Tooltip("兼容旧字段，结算等待改用 ContinueDecisionSeconds")]
@@ -1657,7 +1657,7 @@ namespace Brawl
             {
                 int round = Mathf.Max(0, elimRoundIndex) + 1;
                 int living = CountLivingPlayers();
-                return $"第{round}轮 | 剩余 {living} 人 | {holders} | 只剩一人结算";
+                return $"{holders} | 第{round}轮 剩余{living}人";
             }
 
             return $"{holders} | 持电脑每{HoldScoreInterval:0.##}秒+{HoldScorePoints}分";
@@ -1861,7 +1861,7 @@ namespace Brawl
                 ? info.Rules
                 : DefaultRulesText();
             if (playMode == BrawlPlayMode.PassTheBuck
-                && (!rulesBody.Contains("只剩一人") || rulesBody.Contains("60 秒") || !rulesBody.Contains("5 到 30")))
+                && (rulesBody.Contains("60") || !(rulesBody.Contains("5~30") || rulesBody.Contains("5 到 30"))))
                 rulesBody = BrawlLevelInfo.PassTheBuckRules;
         }
 

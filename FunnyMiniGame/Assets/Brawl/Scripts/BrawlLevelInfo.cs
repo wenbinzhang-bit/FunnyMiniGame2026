@@ -30,8 +30,8 @@ namespace Brawl
         public const string PassTheBuckRules =
             "开局随机一人头上扣一口锅。\n" +
             "背锅的人用右键对准 3 米内的其他玩家，把锅甩给他。\n" +
-            "时间到还背着锅的人会被炸飞淘汰。\n" +
-            "每轮锅的寿命是 5 到 30 秒随机，界面不显示倒计时，图标闪得越快越危险。\n" +
+            "锅会在随机 5~30 秒后爆炸，背着的人会被炸飞淘汰。\n" +
+            "界面不显示倒计时，图标闪得越快越危险。\n" +
             "淘汰到只剩一人就结算。\n" +
             "按存活轮次计分，最后一人拿满分。\n\n" +
             "WASD 移动　　空格 跳跃　　Shift 加速\n" +
@@ -84,7 +84,8 @@ namespace Brawl
             {
                 if (string.IsNullOrEmpty(Title) || Title == "本局规则" || Title == HoldKpiTitle)
                     Title = PassTheBuckTitle;
-                if (string.IsNullOrEmpty(Rules) || Rules == HoldKpiRules || !Rules.Contains("只剩一人"))
+                if (string.IsNullOrEmpty(Rules) || Rules == HoldKpiRules || Rules.Contains("60")
+                    || !(Rules.Contains("5~30") || Rules.Contains("5 到 30")))
                     Rules = PassTheBuckRules;
                 return;
             }
