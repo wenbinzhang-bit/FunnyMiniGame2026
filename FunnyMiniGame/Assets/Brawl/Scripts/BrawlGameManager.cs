@@ -87,9 +87,17 @@ namespace Brawl
         public int HudRoundContinueReadyCount => roundContinueReadyCount;
         public int HudRoundContinueHumanCount => roundContinueHumanCount;
         public float HudRoundResultDuration => RoundResultDurationSeconds;
-        public float HudRoundResultElapsedSeconds => HudIsRoundEnd
-            ? Mathf.Max(0f, RoundResultDurationSeconds - HudRemainingSeconds)
-            : 0f;
+        public float HudRoundResultElapsedSeconds
+        {
+            get
+            {
+                if (HudIsRoundEnd)
+                    return Mathf.Max(0f, RoundResultDurationSeconds - HudRemainingSeconds);
+                if (HudIsFinalKpi && finalKpiStartedAt > 0)
+                    return Mathf.Max(0f, (float)(NetworkTime.time - finalKpiStartedAt));
+                return 0f;
+            }
+        }
         public bool HudIsHost => NetworkServer.active;
         public BrawlPlayMode HudPlayMode => playMode;
         public bool IsPassTheBuck => playMode == BrawlPlayMode.PassTheBuck;
@@ -99,7 +107,7 @@ namespace Brawl
         public float ActiveBuckDumpSeconds => Mathf.Max(1f, buckDumpSeconds);
 
         /// <summary>
-        /// 旧热锅相位已停用。第三关改为三轮淘汰甩锅。
+        /// 旧热锅相位已停用。第三关改为淘汰甩锅，只剩一人时结算。
         /// </summary>
         public bool IsPassTheBuckDumpPhase => false;
 
@@ -183,6 +191,31 @@ namespace Brawl
             return Mathf.Max(0, fallback);
         }
 
+        public bool TryHudFinalKpi(uint netId, out int[] levelScores, out int total)
+        {
+            levelScores = new int[0];
+            total = 0;
+            if (netId == 0u || string.IsNullOrEmpty(finalKpiSnapshot))
+                return false;
+
+            string[] entries = finalKpiSnapshot.Split(';');
+            for (int i = 0; i < entries.Length; i++)
+            {
+                string[] parts = entries[i].Split(':');
+                if (parts.Length != 3) continue;
+                if (!uint.TryParse(parts[0], out uint entryNetId) || entryNetId != netId) continue;
+                string[] scoreParts = parts[1].Split(',');
+                var scores = new int[scoreParts.Length];
+                for (int s = 0; s < scoreParts.Length; s++)
+                    scores[s] = int.TryParse(scoreParts[s], out int value) ? Mathf.Max(0, value) : 0;
+                levelScores = scores;
+                total = int.TryParse(parts[2], out int parsed) ? Mathf.Max(0, parsed) : 0;
+                return true;
+            }
+
+            return false;
+        }
+
         static bool ContainsSyncedNetId(string encoded, uint netId)
         {
             if (netId == 0u || string.IsNullOrEmpty(encoded)) return false;
@@ -226,6 +259,8 @@ namespace Brawl
         [SyncVar] string rulesTitle = "本局规则";
         [SyncVar] string rulesBody = "";
         [SyncVar] string kpiBoardText = "";
+        [SyncVar] string finalKpiSnapshot = "";
+        [SyncVar] double finalKpiStartedAt;
         [SyncVar] string lobbyReadyLine = "";
         [SyncVar] bool lobbyAllReady;
         [SyncVar] int matchSeq;
@@ -238,7 +273,7 @@ namespace Brawl
         [SyncVar] bool elimIntermission;
 
         static readonly float[] ElimRoundSeconds = { 60f, 30f, 15f };
-        const float ElimIntermissionSeconds = 2.5f;
+        const float ElimIntermissionSeconds = 3.2f;
         const int ElimRoundScoreStep = 33;
 
         class PlayerEntry
@@ -485,6 +520,8 @@ namespace Brawl
             roundContinueReadyCount = 0;
             roundContinueHumanCount = 0;
             roundResultSnapshot = "";
+            finalKpiSnapshot = "";
+            finalKpiStartedAt = 0;
             stoppingSession = false;
             roundEndsAt = 0;
             waitingEndsAt = 0;
@@ -1046,6 +1083,8 @@ namespace Brawl
             nextRoundRequested = false;
             continueEndsAt = 0;
             kpiBoardText = FormatKpiBoard();
+            finalKpiSnapshot = FormatFinalKpiSnapshot();
+            finalKpiStartedAt = NetworkTime.time;
             foreach (var p in players)
             {
                 if (p?.motor != null)
@@ -1149,9 +1188,15 @@ namespace Brawl
         [Server]
         void ServerBeginElimRound(int index)
         {
-            elimRoundIndex = Mathf.Clamp(index, 0, ElimRoundSeconds.Length - 1);
+            elimRoundIndex = Mathf.Max(0, index);
+            if (CountLivingPlayers() <= 1)
+            {
+                ServerFinishElimination("只剩一人");
+                return;
+            }
+
             elimIntermission = false;
-            float duration = ElimRoundSeconds[elimRoundIndex];
+            float duration = ElimDurationForRound(elimRoundIndex);
             roundEndsAt = NetworkTime.time + duration;
             ServerDropAllComputers();
             ServerAssignRandomBuck();
@@ -1166,9 +1211,23 @@ namespace Brawl
             Debug.Log($"BRAWL_SMOKE: ELIM_ROUND {elimRoundIndex + 1} duration={duration}");
         }
 
+        static float ElimDurationForRound(int index)
+        {
+            if (index < 0) index = 0;
+            if (index < ElimRoundSeconds.Length)
+                return ElimRoundSeconds[index];
+            return ElimRoundSeconds[ElimRoundSeconds.Length - 1];
+        }
+
         [Server]
         void ServerUpdateElimination()
         {
+            if (CountLivingPlayers() <= 1)
+            {
+                ServerFinishElimination("只剩一人");
+                return;
+            }
+
             if (elimIntermission)
             {
                 if (NetworkTime.time >= roundEndsAt)
@@ -1240,28 +1299,32 @@ namespace Brawl
             if (holder != null)
             {
                 outName = PlayerLabel(holder.NetId);
-                holder.Score = elimRoundIndex * ElimRoundScoreStep;
+                holder.Score = Mathf.Min(elimRoundIndex * ElimRoundScoreStep, Mathf.Max(1, HudScoreMax) - 1);
                 holder.ServerEliminate(SpectatorIsland);
             }
 
             ServerDropAllComputers();
-            int living = CountLivingPlayers();
-            bool moreRounds = elimRoundIndex + 1 < ElimRoundSeconds.Length && living >= 2;
-            if (!moreRounds)
+            if (CountLivingPlayers() <= 1)
             {
-                ServerAwardSurvivorScores();
-                uint winnerId = FirstLivingNetId();
-                ServerFinishRound(false, winnerId);
-                string action = HudHasNextLevel ? "下一关" : "查看总成绩";
-                statusText = $"{outName} 被淘汰！甩锅结束  {DescribeWinner()}  |  点击「{action}」继续，否则 {ResolveContinueSeconds():0} 秒后回到等待";
+                ServerFinishElimination($"{outName} 被炸飞淘汰");
                 return;
             }
 
             elimIntermission = true;
-            float nextDuration = ElimRoundSeconds[elimRoundIndex + 1];
+            float nextDuration = ElimDurationForRound(elimRoundIndex + 1);
             roundEndsAt = NetworkTime.time + ElimIntermissionSeconds;
-            statusText = $"{outName} 被淘汰！下一轮 {nextDuration:0} 秒";
+            statusText = $"{outName} 被炸飞淘汰！下一轮 {nextDuration:0} 秒";
             Debug.Log($"BRAWL_SMOKE: ELIMINATED {outName} next={nextDuration}");
+        }
+
+        [Server]
+        void ServerFinishElimination(string reason)
+        {
+            ServerAwardSurvivorScores();
+            uint winnerId = FirstLivingNetId();
+            ServerFinishRound(false, winnerId);
+            string action = HudHasNextLevel ? "下一关" : "查看总成绩";
+            statusText = $"{reason}！甩锅结束  {DescribeWinner()}  |  点击「{action}」继续，否则 {ResolveContinueSeconds():0} 秒后回到等待";
         }
 
         [Server]
@@ -1432,7 +1495,7 @@ namespace Brawl
         [Server]
         void ServerRescueIfNeeded(PlayerEntry p)
         {
-            if (!IsLiveMotor(p?.motor) || p.motor.Transform == null) return;
+            if (!IsLiveMotor(p?.motor) || p.motor.Transform == null || p.motor.IsDead) return;
             if (p.motor.Transform.position.y < KillY)
                 ServerRescue(p);
         }
@@ -1578,8 +1641,9 @@ namespace Brawl
             string holders = HolderLine();
             if (playMode == BrawlPlayMode.PassTheBuck)
             {
-                int round = Mathf.Clamp(elimRoundIndex, 0, ElimRoundSeconds.Length - 1) + 1;
-                return $"第{round}/{ElimRoundSeconds.Length}轮 | 剩余 {FormatTime(remaining)} | {holders} | 右键点人甩锅，超时淘汰";
+                int round = Mathf.Max(0, elimRoundIndex) + 1;
+                int living = CountLivingPlayers();
+                return $"第{round}轮 | 剩余 {living} 人 | {FormatTime(remaining)} | {holders} | 只剩一人结算";
             }
 
             return $"剩余 {FormatTime(remaining)} | {holders} | 持电脑每{HoldScoreInterval:0.##}秒+{HoldScorePoints}分";
@@ -1782,7 +1846,7 @@ namespace Brawl
             rulesBody = info != null && !string.IsNullOrEmpty(info.Rules)
                 ? info.Rules
                 : DefaultRulesText();
-            if (playMode == BrawlPlayMode.PassTheBuck && !rulesBody.Contains("共三轮"))
+            if (playMode == BrawlPlayMode.PassTheBuck && !rulesBody.Contains("只剩一人"))
                 rulesBody = BrawlLevelInfo.PassTheBuckRules;
         }
 
@@ -1830,6 +1894,27 @@ namespace Brawl
         string FormatKpiBoard()
         {
             return Record.FormatBoard();
+        }
+
+        string FormatFinalKpiSnapshot()
+        {
+            var entries = new List<string>();
+            foreach (PlayerEntry player in players)
+            {
+                if (player?.motor == null) continue;
+                BrawlRunRecord.Seat seat = Record.FindSeat(player.connectionId, player.botIndex);
+                string scores = player.motor.Score.ToString();
+                int total = Mathf.Max(0, player.motor.Score);
+                if (seat != null && seat.levelScores.Count > 0)
+                {
+                    scores = string.Join(",", seat.levelScores);
+                    total = Mathf.Max(0, seat.Total);
+                }
+
+                entries.Add($"{player.motor.NetId}:{scores}:{total}");
+            }
+
+            return string.Join(";", entries);
         }
 
         IEnumerable<IBrawlPlayer> PlayersForHud()
