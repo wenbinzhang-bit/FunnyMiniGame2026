@@ -114,6 +114,7 @@ namespace Brawl
         PlayerAttributes attributes;
         AudioSource hitVoiceSource;
         AudioSource turboExhaustedSource;
+        PunchAnimationEventRelay punchVoiceRelay;
         FAnnequinMeleeVictim meleeVictim;
         CapsuleCollider gameplayCapsule;
         NetworkTransformReliable netTransform;
@@ -186,6 +187,7 @@ namespace Brawl
                 visualStandingLocalPosition = visualRoot.localPosition;
                 visualStandingLocalRotation = visualRoot.localRotation;
             }
+            punchVoiceRelay = GetComponentInChildren<PunchAnimationEventRelay>(true);
             if (Mover) baseMoveSpeed = Mover.MovementSpeed;
 
             attributes = GetComponent<PlayerAttributes>();
@@ -524,7 +526,11 @@ namespace Brawl
 
             bool willThrow = Hero != null && (Hero.IsHoldingUp || Hero.IsThrowing);
             if (!willThrow)
+            {
+                // 本地先播，避免等待 Command -> ClientRpc 往返后才听到挥拳声。
+                PlayPunchVoiceAtAttackStart();
                 BeginLocalAttackLocks(PunchAnimationLockSeconds, PunchMovementLockSeconds);
+            }
 
             CmdPunchOrThrow(0, GetLookDir());
         }
@@ -729,10 +735,16 @@ namespace Brawl
             StopMovementForAttack();
 
             ServerFaceYaw(lookDir);
-            if (kind == 0) Hero.DoPunchF();
+            if (kind == 0)
+            {
+                Hero.DoPunchF();
+                PlayPunchVoiceAtAttackStart();
+            }
             else Hero.DoPunchU();
             RpcPlayClip(kind == 0 ? "Punch F" : "Punch U", 0);
-            ServerPunchPlayers(kind);
+
+            // 玩家击飞必须等到动画命中帧（Punch F 为 0.333 秒）。
+            // 真正判定由动画事件触发；下面的协程只在动画事件漏发时兜底。
 
             if (punchFallback != null) StopCoroutine(punchFallback);
             punchFallback = StartCoroutine(PunchHitFallback(kind));
@@ -1587,7 +1599,17 @@ namespace Brawl
                 if (layer == 1) Mecanim.SetLayerWeight(1, 1f);
                 else if (state == "Holding Throw") Mecanim.SetLayerWeight(1, 0f);
             }
+            if (state == "Punch F")
+                PlayPunchVoiceAtAttackStart();
             Mecanim.CrossFadeInFixedTime(state, 0.145f, layer, 0f);
+        }
+
+        void PlayPunchVoiceAtAttackStart()
+        {
+            if (punchVoiceRelay == null)
+                punchVoiceRelay = GetComponentInChildren<PunchAnimationEventRelay>(true);
+            if (punchVoiceRelay != null)
+                punchVoiceRelay.PlayPunchVoiceAtAttackStart();
         }
 
         [Server]
