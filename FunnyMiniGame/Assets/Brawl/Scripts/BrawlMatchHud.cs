@@ -87,6 +87,11 @@ namespace Brawl
         {
             if (!NetworkClient.active && !NetworkServer.active) return;
             Refresh();
+
+            BrawlGameManager gm = BrawlGameManager.Instance;
+            if (gm != null && gm.HudIsRoundEnd && !gm.HudContinueRequested
+                && (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.N)))
+                gm.RequestNextRound();
         }
 
         void Refresh()
@@ -108,7 +113,7 @@ namespace Brawl
                 else if (gm != null && gm.HudIsRoundEnd)
                     StatusText.text = gm.HudContinueRequested
                         ? "已确认下一局，继续当前玩法"
-                        : $"点击「下一局」继续，否则 {FormatTime(remaining)} 后结束";
+                        : $"点击「下一局」或按 Enter 继续，否则 {FormatTime(remaining)} 后回到等待";
                 else
                     StatusText.text = TrimStatus(gm != null ? gm.HudStatusText : "");
             }
@@ -298,6 +303,7 @@ namespace Brawl
 
             bool requested = gm.HudContinueRequested;
             NextRoundButton.interactable = !requested;
+            NextRoundButton.transform.SetAsLastSibling();
             NextRoundLabel.text = requested ? "已确认" : "下一局";
         }
 

@@ -218,7 +218,8 @@ namespace Brawl.EditorTools
             brawlGm.RoundDurationSeconds = 60f;
             brawlGm.HoldScoreInterval = 0.5f;
             brawlGm.HoldScorePoints = 1;
-            brawlGm.RoundRestartDelay = 6f;
+            brawlGm.RoundRestartDelay = 30f;
+            brawlGm.ContinueDecisionSeconds = 30f;
             brawlGm.WaitingDurationSeconds = 30f;
             Canvas arenaCanvas = Object.FindObjectOfType<Canvas>();
             if (arenaCanvas != null && arenaCanvas.GetComponentInChildren<BrawlMatchHud>(true) == null)
@@ -515,7 +516,8 @@ namespace Brawl.EditorTools
                 brawlGm.RoundDurationSeconds = 60f;
                 brawlGm.HoldScoreInterval = 0.5f;
                 brawlGm.HoldScorePoints = 1;
-                brawlGm.RoundRestartDelay = 6f;
+                brawlGm.RoundRestartDelay = 30f;
+                brawlGm.ContinueDecisionSeconds = 30f;
                 brawlGm.WaitingDurationSeconds = 30f;
             }
 

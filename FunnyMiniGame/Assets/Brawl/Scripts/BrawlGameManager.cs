@@ -218,10 +218,13 @@ namespace Brawl
                 return;
             }
 
+            if (continueEndsAt <= 0)
+                continueEndsAt = NetworkTime.time + ResolveContinueSeconds();
+
             float remain = Mathf.Max(0f, (float)(continueEndsAt - NetworkTime.time));
-            statusText = $"点击「下一局」继续当前玩法，否则 {FormatTime(remain)} 后结束";
+            statusText = $"点击「下一局」继续当前玩法，否则 {FormatTime(remain)} 后回到等待";
             if (remain <= 0f)
-                ServerStopSession();
+                ServerEnterWaiting(true);
         }
 
         public void RequestNextRound()
@@ -250,19 +253,17 @@ namespace Brawl
             Debug.Log("BRAWL_SMOKE: NEXT_ROUND_REQUESTED");
         }
 
+        float ResolveContinueSeconds()
+        {
+            if (ContinueDecisionSeconds >= 1f) return ContinueDecisionSeconds;
+            if (RoundRestartDelay >= 1f) return RoundRestartDelay;
+            return 30f;
+        }
+
         [Server]
         void ServerStopSession()
         {
-            if (stoppingSession) return;
-            stoppingSession = true;
-            statusText = "未选择下一局，对局结束";
-            Debug.Log("BRAWL_SMOKE: SESSION_STOPPED");
-
-            if (NetworkManager.singleton == null) return;
-            if (NetworkServer.active && NetworkClient.active)
-                NetworkManager.singleton.StopHost();
-            else if (NetworkServer.active)
-                NetworkManager.singleton.StopServer();
+            ServerEnterWaiting(true);
         }
 
         [Server]
@@ -342,7 +343,7 @@ namespace Brawl
             state = EState.RoundEnd;
             roundEndsAt = 0;
             nextRoundRequested = false;
-            continueEndsAt = NetworkTime.time + Mathf.Max(1f, ContinueDecisionSeconds);
+            continueEndsAt = NetworkTime.time + ResolveContinueSeconds();
 
             foreach (var p in players)
                 p.motor.InputActive = false;
@@ -356,7 +357,7 @@ namespace Brawl
             string reason = reachedScoreCap
                 ? $"{PlayerLabel(capWinnerNetId)} 达到 {HudScoreMax} 分!"
                 : "时间到!";
-            statusText = $"{reason} {winner}  |  点击「下一局」继续，否则 {ContinueDecisionSeconds:0} 秒后结束";
+            statusText = $"{reason} {winner}  |  点击「下一局」继续，否则 {ResolveContinueSeconds():0} 秒后回到等待";
             Debug.Log($"BRAWL_SMOKE: ROUND_ENDED {statusText} | {rankText}");
         }
 

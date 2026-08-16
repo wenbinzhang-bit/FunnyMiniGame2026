@@ -1791,7 +1791,8 @@ MonoBehaviour:
   syncInterval: 0
   KillY: -8
   SpectatorIsland: {x: 60, y: 3, z: 60}
-  RoundRestartDelay: 6
+  RoundRestartDelay: 30
+  ContinueDecisionSeconds: 30
   RoundDurationSeconds: 180
   HoldScoreInterval: 0.5
   HoldScorePoints: 1
