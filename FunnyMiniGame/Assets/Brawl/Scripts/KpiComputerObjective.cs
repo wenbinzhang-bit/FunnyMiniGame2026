@@ -29,6 +29,7 @@ namespace Brawl
         [Tooltip("持有电脑时循环播放；为空时从 Resources/Audio/ComputerTypingLoop 加载")]
         public AudioClip TypingLoopClip;
         [Range(0f, 1f)] public float TypingLoopVolume = 0.55f;
+        [Range(0f, 1f)] public float FuseLoopVolume = 0.62f;
         [Min(0f)] public float TypingMinDistance = 1.5f;
         [Min(0.1f)] public float TypingMaxDistance = 14f;
 
@@ -38,6 +39,7 @@ namespace Brawl
         NetFAnnequinController serverHolder;
         MaterialPropertyBlock pickupPropertyBlock;
         AudioSource typingLoopSource;
+        static AudioClip generatedFuseClip;
         Vector3 spawnPosition;
         Quaternion spawnRotation;
         bool hasSpawnPose;
@@ -111,29 +113,82 @@ namespace Brawl
             }
 
             EnsureTypingLoopSource();
-            if (typingLoopSource == null || TypingLoopClip == null || typingLoopSource.isPlaying)
+            AudioClip clip = CurrentHeldLoopClip();
+            if (typingLoopSource == null || clip == null)
                 return;
 
-            typingLoopSource.clip = TypingLoopClip;
+            if (typingLoopSource.isPlaying && typingLoopSource.clip == clip)
+                return;
+
+            typingLoopSource.clip = clip;
+            typingLoopSource.volume = BrawlGameManager.PassTheBuckActive ? FuseLoopVolume : TypingLoopVolume;
+            typingLoopSource.pitch = 1f;
             typingLoopSource.Play();
+        }
+
+        AudioClip CurrentHeldLoopClip()
+        {
+            if (BrawlGameManager.PassTheBuckActive)
+            {
+                if (generatedFuseClip == null)
+                    generatedFuseClip = CreateFuseClip();
+                return generatedFuseClip;
+            }
+
+            if (TypingLoopClip == null)
+                TypingLoopClip = Resources.Load<AudioClip>("Audio/ComputerTypingLoop");
+            return TypingLoopClip;
         }
 
         void EnsureTypingLoopSource()
         {
-            if (TypingLoopClip == null)
-                TypingLoopClip = Resources.Load<AudioClip>("Audio/ComputerTypingLoop");
-
             if (typingLoopSource == null)
                 typingLoopSource = gameObject.AddComponent<AudioSource>();
 
             typingLoopSource.playOnAwake = false;
             typingLoopSource.loop = true;
-            typingLoopSource.volume = TypingLoopVolume;
             typingLoopSource.spatialBlend = 1f;
             typingLoopSource.dopplerLevel = 0f;
             typingLoopSource.minDistance = Mathf.Max(0f, TypingMinDistance);
             typingLoopSource.maxDistance = Mathf.Max(typingLoopSource.minDistance + 0.1f, TypingMaxDistance);
             typingLoopSource.rolloffMode = AudioRolloffMode.Logarithmic;
+        }
+
+        void Update()
+        {
+            if (!isClient || !IsHeld || typingLoopSource == null || !typingLoopSource.isPlaying)
+                return;
+            if (!BrawlGameManager.PassTheBuckActive)
+                return;
+
+            float remaining = BrawlGameManager.Instance != null
+                ? BrawlGameManager.Instance.HudRemainingSeconds
+                : 30f;
+            float heat = remaining <= 10f ? Mathf.InverseLerp(10f, 0f, remaining) : 0f;
+            typingLoopSource.pitch = 1f + heat * 0.55f;
+            typingLoopSource.volume = FuseLoopVolume * (0.78f + heat * 0.45f);
+        }
+
+        static AudioClip CreateFuseClip()
+        {
+            const int sampleRate = 22050;
+            const float duration = 1.15f;
+            int samples = Mathf.RoundToInt(sampleRate * duration);
+            var data = new float[samples];
+            var rng = new System.Random(2026);
+            float crackle = 0f;
+            for (int i = 0; i < samples; i++)
+            {
+                float noise = (float)(rng.NextDouble() * 2.0 - 1.0);
+                if (rng.NextDouble() < 0.014)
+                    crackle = 0.5f + (float)rng.NextDouble() * 0.5f;
+                crackle *= 0.84f;
+                data[i] = Mathf.Clamp(noise * 0.2f + crackle * noise * 0.72f, -1f, 1f);
+            }
+
+            var clip = AudioClip.Create("BuckFuse", samples, 1, sampleRate, false);
+            clip.SetData(data, 0);
+            return clip;
         }
 
         void FixedUpdate()

@@ -87,6 +87,7 @@ namespace Brawl
         [SyncVar(hook = nameof(OnSyncSpeed))] float syncSpeed;
         [SyncVar(hook = nameof(OnSyncHoldingComputer))] bool syncHoldingComputer;
         [SyncVar] bool syncEliminated;
+        [SyncVar(hook = nameof(OnSyncVanished))] bool syncVanished;
         [SyncVar] float syncTurboRemaining = 5f;
         [SyncVar] public bool LobbyReady;
 
@@ -145,6 +146,8 @@ namespace Brawl
         Coroutine computerPickupRoutine;
         Coroutine knockdownRoutine;
         Coroutine visualFallRoutine;
+        Coroutine explodeVanishRoutine;
+        static AudioClip generatedExplosionClip;
         float knockbackUntil;
         RigidbodyConstraints standingConstraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
         float lastPlayerPunchTime = -1f;
@@ -178,6 +181,12 @@ namespace Brawl
         const float JumpLandingMaxUpwardSpeed = 0.5f;
         const byte BtnSprint = 1;
         const byte BtnCtrl = 2;
+        const float StandingGroundSkin = 0.02f;
+        const float GroundProbeUp = 3f;
+        const float GroundProbeDistance = 8f;
+        const float GroundProbeMaxDrop = 4f;
+        const int GroundProbeMask = 1;
+        readonly RaycastHit[] groundProbeHits = new RaycastHit[16];
 
         void Awake()
         {
@@ -255,6 +264,9 @@ namespace Brawl
                 if (capsule.radius < 0.38f) capsule.radius = 0.38f;
             }
 
+            ApplyContinuousCollision();
+            StartCoroutine(ServerApplyRagdollCollisionWhenReady());
+
             if (Hero != null)
                 Hero.OnMeleeHit = ServerOnHeroMeleeHit;
             if (meleeVictim != null)
@@ -290,6 +302,9 @@ namespace Brawl
                     Mecanim.SetFloat("Speed", syncSpeed);
                 }
             }
+
+            if (syncVanished)
+                ApplyEliminatedHidden(true);
         }
 
         void ConfigureNetworkSync()
@@ -1378,6 +1393,8 @@ namespace Brawl
                 ERagdollChainType.Core);
             if (core == null) return false;
 
+            ApplyContinuousCollision();
+
             if (visualFallRoutine != null)
             {
                 StopCoroutine(visualFallRoutine);
@@ -1533,6 +1550,7 @@ namespace Brawl
             knockbackUntil = 0f;
 
             if (IsGrabbed) return;
+            ServerAlignStandingToGround(false, wasPhysicalRagdoll);
 
             InputActive = true;
             if (Mover) Mover.enabled = true;
@@ -1562,6 +1580,7 @@ namespace Brawl
             }
             if (gameplayCapsule != null)
                 gameplayCapsule.enabled = true;
+            ServerAlignStandingToGround(false, true);
         }
 
         [ClientRpc]
@@ -1858,12 +1877,108 @@ namespace Brawl
             if (grabber != null)
                 grabber.ServerReleaseHeldPlayer(Vector3.zero, false);
 
-            transform.position = position;
-            if (Mover && Mover.Rigb)
+            if (TryProbeGroundY(position, out float groundY))
+                position.y = groundY + StandingGroundSkin;
+            ServerApplyStandingPosition(position, true);
+        }
+
+        void ApplyContinuousCollision()
+        {
+            if (Mover != null && Mover.Rigb != null && !Mover.Rigb.isKinematic)
+                Mover.Rigb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+
+            if (Ragdoll == null || Ragdoll.Handler == null) return;
+            Ragdoll.Handler.RigidbodiesDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+            if (Ragdoll.Handler.WasInitialized)
+                Ragdoll.User_UpdateRigidbodyParametersForAllBones();
+        }
+
+        IEnumerator ServerApplyRagdollCollisionWhenReady()
+        {
+            if (Ragdoll == null) yield break;
+            float timeout = 5f;
+            while (Ragdoll != null && Ragdoll.Handler != null && !Ragdoll.Handler.WasInitialized && timeout > 0f)
             {
-                Mover.Rigb.velocity = Vector3.zero;
-                Mover.Rigb.position = position;
+                timeout -= Time.deltaTime;
+                yield return null;
             }
+
+            ApplyContinuousCollision();
+        }
+
+        [Server]
+        void ServerAlignStandingToGround(bool forceToGround, bool warpRagdoll)
+        {
+            Vector3 position = transform.position;
+            if (TryProbeGroundY(position, out float groundY))
+            {
+                float targetY = groundY + StandingGroundSkin;
+                if (forceToGround || position.y < targetY - 0.01f)
+                    position.y = targetY;
+            }
+
+            if ((position - transform.position).sqrMagnitude < 0.0001f && !warpRagdoll)
+                return;
+            ServerApplyStandingPosition(position, warpRagdoll);
+        }
+
+        [Server]
+        void ServerApplyStandingPosition(Vector3 position, bool warpRagdoll)
+        {
+            transform.position = position;
+            if (Mover != null && Mover.Rigb != null)
+            {
+                Mover.Rigb.position = position;
+                Mover.Rigb.velocity = Vector3.zero;
+                Mover.Rigb.angularVelocity = Vector3.zero;
+            }
+
+            Physics.SyncTransforms();
+            if (warpRagdoll)
+                ServerWarpRagdoll(position);
+        }
+
+        [Server]
+        void ServerWarpRagdoll(Vector3 position)
+        {
+            if (Ragdoll == null || Ragdoll.Handler == null || !Ragdoll.Handler.WasInitialized)
+                return;
+            Ragdoll.User_Teleport(position);
+            Ragdoll.User_WarpRefresh();
+        }
+
+        bool TryProbeGroundY(Vector3 from, out float groundY)
+        {
+            groundY = from.y;
+            int hitCount = Physics.RaycastNonAlloc(
+                from + Vector3.up * GroundProbeUp,
+                Vector3.down,
+                groundProbeHits,
+                GroundProbeDistance,
+                GroundProbeMask,
+                QueryTriggerInteraction.Ignore);
+            if (hitCount <= 0) return false;
+
+            bool found = false;
+            float bestY = float.NegativeInfinity;
+            for (int i = 0; i < hitCount; i++)
+            {
+                Collider hitCollider = groundProbeHits[i].collider;
+                if (hitCollider == null) continue;
+                Transform hitTransform = hitCollider.transform;
+                if (hitTransform == transform || hitTransform.IsChildOf(transform))
+                    continue;
+
+                float y = groundProbeHits[i].point.y;
+                if (y < from.y - GroundProbeMaxDrop) continue;
+                if (y <= bestY) continue;
+                bestY = y;
+                found = true;
+            }
+
+            if (!found) return false;
+            groundY = bestY;
+            return true;
         }
 
         public override void OnStopServer()
@@ -2162,19 +2277,177 @@ namespace Brawl
         public void ServerEliminate(Vector3 spectatorIsland)
         {
             if (syncEliminated) return;
+            _ = spectatorIsland;
             ServerForceDropComputer(force: true);
             syncEliminated = true;
+            syncVanished = false;
             InputActive = false;
             pendingMove = Vector3.zero;
-            ServerForceStand();
-            Vector3 dest = spectatorIsland + new Vector3(Random.Range(-2f, 2f), 1.2f, Random.Range(-2f, 2f));
-            ServerTeleport(dest);
+            if (knockdownRoutine != null)
+            {
+                StopCoroutine(knockdownRoutine);
+                knockdownRoutine = null;
+            }
+
+            IsKnockedDown = true;
+            Vector3 blast = Quaternion.Euler(0f, Random.Range(0f, 360f), 0f) * Vector3.forward;
+            Vector3 impactDirection = blast * 1.15f + Vector3.up * 1.35f;
+            physicalRagdollActive = TryStartPhysicalRagdoll(impactDirection);
+            if (!physicalRagdollActive && Mover != null && Mover.Rigb != null)
+            {
+                Mover.enabled = false;
+                if (Mover.Rigb.isKinematic) Mover.Rigb.isKinematic = false;
+                Mover.Rigb.constraints = standingConstraints;
+                Mover.Rigb.velocity = blast * 9f + Vector3.up * 11f;
+            }
+
+            RpcKnockDown(true, "Fall", false, physicalRagdollActive);
+            RpcBuckExplode(transform.position + Vector3.up * 1.1f);
+            if (explodeVanishRoutine != null)
+                StopCoroutine(explodeVanishRoutine);
+            explodeVanishRoutine = StartCoroutine(ServerVanishAfterBlast());
+        }
+
+        IEnumerator ServerVanishAfterBlast()
+        {
+            yield return new WaitForSeconds(1.35f);
+            if (!syncEliminated) yield break;
+            syncVanished = true;
+            if (Mover != null)
+            {
+                Mover.enabled = false;
+                if (Mover.Rigb != null)
+                {
+                    Mover.Rigb.velocity = Vector3.zero;
+                    Mover.Rigb.angularVelocity = Vector3.zero;
+                    Mover.Rigb.isKinematic = true;
+                }
+            }
+        }
+
+        [ClientRpc]
+        void RpcBuckExplode(Vector3 origin)
+        {
+            PlayBuckExplosion(origin);
+        }
+
+        void OnSyncVanished(bool _, bool vanished)
+        {
+            ApplyEliminatedHidden(vanished);
+        }
+
+        void ApplyEliminatedHidden(bool hidden)
+        {
+            Renderer[] renderers = GetComponentsInChildren<Renderer>(true);
+            for (int i = 0; i < renderers.Length; i++)
+            {
+                if (renderers[i] != null)
+                    renderers[i].enabled = !hidden;
+            }
+
+            Collider[] colliders = GetComponentsInChildren<Collider>(true);
+            for (int i = 0; i < colliders.Length; i++)
+            {
+                if (colliders[i] != null)
+                    colliders[i].enabled = !hidden;
+            }
+
+            if (Mecanim != null)
+                Mecanim.enabled = !hidden;
+            if (Mover != null)
+                Mover.enabled = !hidden && !IsDead;
+        }
+
+        static void PlayBuckExplosion(Vector3 origin)
+        {
+            if (generatedExplosionClip == null)
+                generatedExplosionClip = CreateExplosionClip();
+
+            var listener = new GameObject("BuckExplosionSfx");
+            listener.transform.position = origin;
+            var source = listener.AddComponent<AudioSource>();
+            source.playOnAwake = false;
+            source.spatialBlend = 1f;
+            source.minDistance = 2f;
+            source.maxDistance = 28f;
+            source.rolloffMode = AudioRolloffMode.Linear;
+            source.PlayOneShot(generatedExplosionClip, 0.95f);
+            Object.Destroy(listener, 2f);
+
+            var fx = new GameObject("BuckExplosionFx");
+            fx.transform.position = origin;
+            var particles = fx.AddComponent<ParticleSystem>();
+            var main = particles.main;
+            main.duration = 0.22f;
+            main.loop = false;
+            main.playOnAwake = false;
+            main.startLifetime = 0.45f;
+            main.startSpeed = 8f;
+            main.startSize = 0.16f;
+            main.startColor = new Color(1f, 0.42f, 0.08f, 1f);
+            main.gravityModifier = 0.85f;
+            main.maxParticles = 48;
+            main.simulationSpace = ParticleSystemSimulationSpace.World;
+            var emission = particles.emission;
+            emission.rateOverTime = 0f;
+            emission.SetBursts(new[] { new ParticleSystem.Burst(0f, 40) });
+            var shape = particles.shape;
+            shape.shapeType = ParticleSystemShapeType.Sphere;
+            shape.radius = 0.28f;
+            var fxRenderer = fx.GetComponent<ParticleSystemRenderer>();
+            if (fxRenderer != null)
+            {
+                Shader shader = Shader.Find("Particles/Standard Unlit");
+                if (shader == null)
+                    shader = Shader.Find("Legacy Shaders/Particles/Additive");
+                if (shader != null)
+                    fxRenderer.material = new Material(shader) { color = new Color(1f, 0.5f, 0.08f, 1f) };
+            }
+
+            particles.Play();
+            Object.Destroy(fx, 2f);
+        }
+
+        static AudioClip CreateExplosionClip()
+        {
+            const int sampleRate = 22050;
+            const float duration = 0.55f;
+            int samples = Mathf.RoundToInt(sampleRate * duration);
+            var data = new float[samples];
+            var rng = new System.Random(88);
+            for (int i = 0; i < samples; i++)
+            {
+                float t = i / (float)sampleRate;
+                float env = Mathf.Exp(-t * 7.5f);
+                float boom = Mathf.Sin(2f * Mathf.PI * 72f * t) * env;
+                float noise = (float)(rng.NextDouble() * 2.0 - 1.0) * env * 0.55f;
+                data[i] = Mathf.Clamp(boom * 0.7f + noise, -1f, 1f);
+            }
+
+            var clip = AudioClip.Create("BuckExplosion", samples, 1, sampleRate, false);
+            clip.SetData(data, 0);
+            return clip;
         }
 
         [Server]
         public void ServerClearElimination()
         {
+            if (explodeVanishRoutine != null)
+            {
+                StopCoroutine(explodeVanishRoutine);
+                explodeVanishRoutine = null;
+            }
+
             syncEliminated = false;
+            syncVanished = false;
+            if (Mover != null && Mover.Rigb != null)
+            {
+                Mover.Rigb.isKinematic = false;
+                Mover.Rigb.velocity = Vector3.zero;
+                Mover.Rigb.angularVelocity = Vector3.zero;
+            }
+
+            ApplyEliminatedHidden(false);
         }
 
         [Server]

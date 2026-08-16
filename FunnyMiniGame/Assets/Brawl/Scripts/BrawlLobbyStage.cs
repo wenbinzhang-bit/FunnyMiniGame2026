@@ -22,6 +22,7 @@ namespace Brawl
 
             EnsureGround();
             EnsureSpawns();
+            BrawlGroundColliderFix.ApplyInActiveScene();
         }
 
         static void EnsureGround()

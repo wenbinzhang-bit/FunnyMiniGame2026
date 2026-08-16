@@ -213,7 +213,7 @@ namespace Brawl
             bool online = NetworkClient.active || NetworkServer.active;
             BrawlGameManager gm = BrawlGameManager.Instance;
             bool showRules = online && gm != null && gm.HudIsShowingRules;
-            bool showRoundResult = online && gm != null && gm.HudIsRoundEnd;
+            bool showRoundResult = online && gm != null && (gm.HudIsRoundEnd || gm.HudIsFinalKpi);
             if (ControlsText != null)
                 ControlsText.gameObject.SetActive(online && !showRules && !showRoundResult);
             if (!online) return;
@@ -317,7 +317,7 @@ namespace Brawl
             bool launcherLobby = gm != null && gm.HudIsLobby && BrawlLevelCatalog.ActiveSceneIsLauncher();
             if (StatusText != null)
             {
-                StatusText.gameObject.SetActive(!launcherLobby && (gm == null || !gm.HudIsRoundEnd));
+                StatusText.gameObject.SetActive(!launcherLobby && (gm == null || (!gm.HudIsRoundEnd && !gm.HudIsFinalKpi)));
                 if (gm != null && gm.HudIsLobby)
                     StatusText.text = string.IsNullOrEmpty(gm.HudStatusText)
                         ? "大厅等待加入，房主点击开始进入第一关"
@@ -714,20 +714,23 @@ namespace Brawl
 
         void BindRoundResultPanel(BrawlGameManager gm)
         {
-            bool show = gm != null && gm.HudIsRoundEnd;
+            bool final = gm != null && gm.HudIsFinalKpi;
+            bool show = gm != null && (gm.HudIsRoundEnd || final);
             if (roundResultRoot != null)
                 roundResultRoot.SetActive(show);
             if (!show || roundResultRoot == null) return;
 
             roundResultRoot.transform.SetAsLastSibling();
             if (roundResultTitle != null)
-                roundResultTitle.text = $"{BrawlLevelCatalog.GetLevelTitle(BrawlLevelCatalog.ActiveSceneName())}：绩效考核";
+                roundResultTitle.text = final
+                    ? "整场 KPI 汇总"
+                    : $"{BrawlLevelCatalog.GetLevelTitle(BrawlLevelCatalog.ActiveSceneName())}：绩效考核";
 
             var ordered = new List<IBrawlPlayer>(hudPlayers);
             ordered.Sort((a, b) =>
             {
-                int cmp = b.Score.CompareTo(a.Score);
-                return cmp != 0 ? cmp : a.NetId.CompareTo(b.NetId);
+                int cmp = ResultSortScore(gm, a, final).CompareTo(ResultSortScore(gm, b, final));
+                return cmp != 0 ? -cmp : a.NetId.CompareTo(b.NetId);
             });
             if (ordered.Count > roundResultCards.Length)
                 ordered.RemoveRange(roundResultCards.Length, ordered.Count - roundResultCards.Length);
@@ -752,17 +755,18 @@ namespace Brawl
                 BrawlRoundResultRules.Grade grade = BrawlRoundResultRules.ResolveGrade(i, ordered.Count);
                 string playerName = BrawlHudNames.Label(player.NetId, hudPlayers);
                 if (card.Name != null) card.Name.text = playerName;
-                if (card.Rank != null) card.Rank.text = $"本关排名：{i + 1}";
-                if (card.Score != null) card.Score.text = $"本关得分：+{Mathf.Max(0, player.Score)}分";
-                if (card.Performance != null) card.Performance.text = "当季绩效：";
-                if (card.TotalKpi != null) card.TotalKpi.text = $"综合KPI：{gm.HudRoundTotalKpi(player.NetId, player.Score)}分";
-                if (card.Comment != null) card.Comment.text = $"评语：{BrawlRoundResultRules.Comment(grade)}";
                 if (card.Stamp != null) card.Stamp.sprite = ResultStampSprite(grade);
+                if (card.Comment != null) card.Comment.text = $"评语：{BrawlRoundResultRules.Comment(grade)}";
                 if (card.Avatar != null)
                 {
                     card.Avatar.sprite = ResolvePlayerAvatar(player, i);
                     card.Avatar.color = Color.white;
                 }
+
+                if (final)
+                    BindFinalKpiCard(card, gm, player, i);
+                else
+                    BindRoundKpiCard(card, gm, player, i);
 
                 float revealStart = i * ResultRevealInterval;
                 float reveal = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((elapsed - revealStart) / ResultRevealDuration));
@@ -770,12 +774,93 @@ namespace Brawl
                 card.Root.transform.localScale = Vector3.one * Mathf.Lerp(0.86f, 1f, reveal);
             }
 
-            int seconds = Mathf.Max(0, Mathf.CeilToInt(gm.HudRemainingSeconds));
-            string destination = gm.HudHasNextLevel ? "下一关" : "总成绩";
-            if (roundResultCountdown != null)
-                roundResultCountdown.text = $"{seconds}s后自动进入{destination}";
             if (roundResultReadyStatus != null)
-                roundResultReadyStatus.text = $"已确认 {gm.HudRoundContinueReadyCount}/{gm.HudRoundContinueHumanCount}";
+            {
+                roundResultReadyStatus.gameObject.SetActive(!final);
+                if (!final)
+                    roundResultReadyStatus.text = $"已确认 {gm.HudRoundContinueReadyCount}/{gm.HudRoundContinueHumanCount}";
+            }
+
+            if (roundResultCountdown != null)
+            {
+                RectTransform countdownRect = roundResultCountdown.rectTransform;
+                if (final)
+                {
+                    SetHudRect(countdownRect, new Vector2(0.30f, 0.075f), new Vector2(0.70f, 0.155f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+                    roundResultCountdown.fontSize = 28;
+                    roundResultCountdown.text = "3 关全部结束";
+                }
+                else
+                {
+                    SetHudRect(countdownRect, new Vector2(0.30f, 0.015f), new Vector2(0.70f, 0.07f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+                    roundResultCountdown.fontSize = 23;
+                    int seconds = Mathf.Max(0, Mathf.CeilToInt(gm.HudRemainingSeconds));
+                    string destination = gm.HudHasNextLevel ? "下一关" : "总成绩";
+                    roundResultCountdown.text = $"{seconds}s后自动进入{destination}";
+                }
+            }
+        }
+
+        static int ResultSortScore(BrawlGameManager gm, IBrawlPlayer player, bool final)
+        {
+            if (player == null) return 0;
+            if (final && gm != null && gm.TryHudFinalKpi(player.NetId, out _, out int total))
+                return total;
+            return player.Score;
+        }
+
+        static void BindRoundKpiCard(RoundResultCard card, BrawlGameManager gm, IBrawlPlayer player, int rankIndex)
+        {
+            if (card.Rank != null) card.Rank.text = $"本关排名：{rankIndex + 1}";
+            if (card.Score != null) card.Score.text = $"本关得分：+{Mathf.Max(0, player.Score)}分";
+            if (card.Performance != null) card.Performance.text = "当季绩效：";
+            if (card.TotalKpi != null)
+                card.TotalKpi.text = $"综合KPI：{gm.HudRoundTotalKpi(player.NetId, player.Score)}分";
+        }
+
+        static void BindFinalKpiCard(RoundResultCard card, BrawlGameManager gm, IBrawlPlayer player, int rankIndex)
+        {
+            int total = player.Score;
+            int[] levelScores = { Mathf.Max(0, player.Score) };
+            if (gm.TryHudFinalKpi(player.NetId, out int[] snapshotScores, out int snapshotTotal))
+            {
+                levelScores = snapshotScores;
+                total = snapshotTotal;
+            }
+            else
+            {
+                total = gm.HudRoundTotalKpi(player.NetId, player.Score);
+            }
+
+            if (card.Rank != null) card.Rank.text = $"总排名：{rankIndex + 1}";
+            SplitLevelScoreLines(levelScores, out string scoreLine, out string performanceLine);
+            if (card.Score != null) card.Score.text = scoreLine;
+            if (card.Performance != null) card.Performance.text = performanceLine;
+            if (card.TotalKpi != null) card.TotalKpi.text = $"综合KPI：{total}分";
+        }
+
+        static void SplitLevelScoreLines(int[] levelScores, out string scoreLine, out string performanceLine)
+        {
+            if (levelScores == null || levelScores.Length == 0)
+            {
+                scoreLine = "各关得分：暂无";
+                performanceLine = "";
+                return;
+            }
+
+            var lines = new List<string>(levelScores.Length);
+            for (int i = 0; i < levelScores.Length; i++)
+                lines.Add($"第{i + 1}关 +{Mathf.Max(0, levelScores[i])}分");
+
+            if (lines.Count == 1)
+            {
+                scoreLine = lines[0];
+                performanceLine = "";
+                return;
+            }
+
+            scoreLine = lines[0];
+            performanceLine = string.Join("    ", lines.GetRange(1, lines.Count - 1));
         }
 
         void EnsureTurboVisuals()
@@ -2185,26 +2270,10 @@ namespace Brawl
             }
         }
 
-        void BindRanking(BrawlGameManager gm)
+        void BindRanking(BrawlGameManager _)
         {
-            bool showFinal = gm != null && gm.HudIsFinalKpi;
-            bool show = showFinal;
             if (RankingRoot != null)
-            {
-                RankingRoot.SetActive(show);
-                foreach (Graphic graphic in RankingRoot.GetComponentsInChildren<Graphic>(true))
-                {
-                    if (graphic != null)
-                        graphic.raycastTarget = false;
-                }
-            }
-            if (!show || RankingBody == null) return;
-
-            Text title = RankingRoot != null ? RankingRoot.transform.Find("Title")?.GetComponent<Text>() : null;
-            if (title != null)
-                title.text = "整场 KPI 汇总";
-
-            RankingBody.text = string.IsNullOrEmpty(gm.HudKpiBoardText) ? "还没有成绩" : gm.HudKpiBoardText;
+                RankingRoot.SetActive(false);
         }
 
         void ApplyPassTheBuckDumpStatusColor(bool dumpPhase)
