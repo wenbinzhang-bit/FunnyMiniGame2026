@@ -287,19 +287,18 @@ namespace Brawl
 
         void LateUpdate()
         {
-            bool showWall = ShouldShowMatchAirWall();
-            if (showWall)
-                BrawlAirWall.EnsureInLevel(this);
-            BrawlAirWall.SetAllActive(showWall);
+            ApplyAirWall();
         }
 
         bool ShouldShowMatchAirWall()
         {
+            if (!airWallActive)
+                return false;
             if (BrawlLevelCatalog.ActiveSceneIsLauncher())
                 return false;
             if (!BrawlLevelCatalog.ActiveSceneIsLevel())
                 return false;
-            return state != EState.Playing && state != EState.RoundEnd && state != EState.FinalKpi;
+            return state == EState.Rules || state == EState.Waiting;
         }
 
         [Server]
@@ -1122,9 +1121,8 @@ namespace Brawl
         {
             bool show = ShouldShowMatchAirWall();
             BrawlAirWall.ClearStale();
-            BrawlAirWall wall = show ? BrawlAirWall.EnsureInLevel(this) : BrawlAirWall.Ensure(this);
-            if (wall != null)
-                wall.SetActiveWall(show);
+            if (show)
+                BrawlAirWall.EnsureInLevel(this, NetworkServer.active);
             BrawlAirWall.SetAllActive(show);
         }
 

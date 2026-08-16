@@ -52,10 +52,11 @@ namespace Brawl
             return Instance;
         }
 
-        public static BrawlAirWall EnsureInLevel(BrawlGameManager gm)
+        public static BrawlAirWall EnsureInLevel(BrawlGameManager gm, bool allowCreate = true)
         {
             BrawlAirWall wall = Ensure(gm);
             if (wall != null) return wall;
+            if (!allowCreate) return null;
             if (!BrawlLevelCatalog.IsLevel(SceneManager.GetActiveScene().name))
                 return null;
 
@@ -114,13 +115,8 @@ namespace Brawl
 
         public static void SetAllActive(bool active)
         {
-            int handle = SceneManager.GetActiveScene().handle;
-            if (cachedWalls == null || cachedWalls.Length == 0 || cachedWalls[0] == null || cachedSceneHandle != handle)
-            {
-                cachedWalls = FindObjectsOfType<BrawlAirWall>(true);
-                cachedSceneHandle = handle;
-            }
-
+            cachedWalls = FindObjectsOfType<BrawlAirWall>(true);
+            cachedSceneHandle = SceneManager.GetActiveScene().handle;
             if (cachedWalls == null) return;
             for (int i = 0; i < cachedWalls.Length; i++)
             {
@@ -135,7 +131,9 @@ namespace Brawl
                 gameObject.SetActive(true);
 
             BindChildren();
-            ApplyCameraBlockerLayer();
+            if (active)
+                ApplyCameraBlockerLayer();
+
             for (int i = 0; i < transform.childCount; i++)
             {
                 Transform child = transform.GetChild(i);
