@@ -1,6 +1,8 @@
 using System.Collections;
+using System.Collections.Generic;
 using Mirror;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace Brawl
 {
@@ -56,6 +58,46 @@ namespace Brawl
             if (discovery != null)
                 discovery.StopDiscovery();
             base.OnStopServer();
+        }
+
+        public override Transform GetStartPosition()
+        {
+            List<Transform> local = CollectActiveSceneStartPositions();
+            if (local.Count == 0)
+                return null;
+
+            if (playerSpawnMethod == PlayerSpawnMethod.Random)
+                return local[Random.Range(0, local.Count)];
+
+            Transform start = local[Mathf.Abs(startPositionIndex) % local.Count];
+            startPositionIndex++;
+            return start;
+        }
+
+        public static List<Transform> CollectActiveSceneStartPositions()
+        {
+            var local = new List<Transform>();
+            Scene active = SceneManager.GetActiveScene();
+            startPositions.RemoveAll(t => t == null);
+            for (int i = 0; i < startPositions.Count; i++)
+            {
+                Transform t = startPositions[i];
+                if (t != null && t.gameObject.scene == active && !local.Contains(t))
+                    local.Add(t);
+            }
+
+            if (local.Count > 0)
+                return local;
+
+            NetworkStartPosition[] found = FindObjectsOfType<NetworkStartPosition>();
+            for (int i = 0; i < found.Length; i++)
+            {
+                if (found[i] == null || found[i].gameObject.scene != active) continue;
+                if (!local.Contains(found[i].transform))
+                    local.Add(found[i].transform);
+            }
+
+            return local;
         }
 
         public bool TryChangeLevel(string sceneName)
@@ -398,9 +440,9 @@ namespace Brawl
 
             int botIndex = BrawlBotBrain.AliveCount;
             Vector3 origin = Vector3.up * 2f;
-            NetworkStartPosition[] starts = FindObjectsOfType<NetworkStartPosition>();
-            if (starts != null && starts.Length > 0 && starts[0] != null)
-                origin = starts[0].transform.position;
+            List<Transform> starts = CollectActiveSceneStartPositions();
+            if (starts.Count > 0 && starts[0] != null)
+                origin = starts[0].position;
 
             Vector3 offset = Quaternion.Euler(0f, 80f * (botIndex + 1), 0f) * Vector3.forward * 2.4f;
             Vector3 pos = origin + offset;
