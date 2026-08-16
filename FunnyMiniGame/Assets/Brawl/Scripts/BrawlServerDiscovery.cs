@@ -90,6 +90,50 @@ namespace Brawl
                 PlayerPrefs.SetString(NamePrefsKey, name.Trim());
         }
 
+        public static string LocalIpv4Display()
+        {
+            List<LanNic> locals = CollectLocalIpv4();
+            if (locals.Count == 0)
+                return "未知";
+
+            var ips = new List<string>(locals.Count);
+            string preferred = TryOutboundIpv4();
+            if (!string.IsNullOrEmpty(preferred))
+                ips.Add(preferred);
+
+            for (int i = 0; i < locals.Count; i++)
+            {
+                string ip = locals[i].Address.ToString();
+                if (!ips.Contains(ip))
+                    ips.Add(ip);
+            }
+
+            if (ips.Count == 1)
+                return ips[0];
+            return ips[0] + "  /  " + ips[1];
+        }
+
+        static string TryOutboundIpv4()
+        {
+            try
+            {
+                using (var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp))
+                {
+                    socket.Connect("8.8.8.8", 65530);
+                    if (socket.LocalEndPoint is IPEndPoint endPoint
+                        && endPoint.Address.AddressFamily == AddressFamily.InterNetwork
+                        && !IPAddress.IsLoopback(endPoint.Address)
+                        && !IsLinkLocal(endPoint.Address.ToString()))
+                        return endPoint.Address.ToString();
+                }
+            }
+            catch
+            {
+            }
+
+            return "";
+        }
+
         public void AddUnicastTarget(string address)
         {
             if (!TryNormalizeIpv4(address, out string ip)) return;

@@ -12,8 +12,8 @@ namespace Brawl
     {
         const float PanelWidth = 438f;
         const float ConnectedWidth = 360f;
-        const float DisconnectedHeight = 452f;
-        const float ConnectedHeight = 128f;
+        const float DisconnectedHeight = 476f;
+        const float ConnectedHeight = 154f;
         const float ConnectingHeight = 164f;
 
         static readonly Color PanelColor = new Color(0.16f, 0.17f, 0.18f, 0.96f);
@@ -42,6 +42,8 @@ namespace Brawl
         InputField portField;
         Text connectingLabel;
         Text emptyListText;
+        Text disconnectedIpText;
+        Text connectedIpText;
         RectTransform serverListContent;
         Button stopHostButton;
         Button stopClientButton;
@@ -51,6 +53,8 @@ namespace Brawl
         string lastListFingerprint;
         string transientHint;
         float transientHintUntil;
+        string cachedLocalIp;
+        float nextLocalIpRefresh;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Boot()
@@ -120,6 +124,8 @@ namespace Brawl
                     portTransport.Port = port;
             }
 
+            RefreshLocalIpLabels(server);
+
             if (connecting)
             {
                 BindHeader("连接中", WaitDot, "正在联系主机，可随时取消");
@@ -130,13 +136,13 @@ namespace Brawl
                 string room = discovery != null ? discovery.ServerName : "房间";
                 int bots = BrawlBotBrain.AliveCount;
                 BindHeader("主机中", LiveDot, bots > 0
-                    ? $"{room} 已开启  ·  {TransportName()}  ·  Bot {bots}"
-                    : $"{room} 已开启，同伴可在列表里点进来  ·  {TransportName()}");
+                    ? $"{room} 已开启  ·  本机 {LocalIpText()}  ·  Bot {bots}"
+                    : $"{room} 已开启  ·  本机 {LocalIpText()}  ·  {TransportName()}");
             }
             else if (server)
             {
                 string room = discovery != null ? discovery.ServerName : "房间";
-                BindHeader("服务器", LiveDot, $"{room}  ·  仅服务器  ·  {TransportName()}");
+                BindHeader("服务器", LiveDot, $"{room}  ·  本机 {LocalIpText()}  ·  {TransportName()}");
             }
             else if (client)
             {
@@ -170,6 +176,30 @@ namespace Brawl
                     LayoutStopSingle();
                 }
             }
+        }
+
+        void RefreshLocalIpLabels(bool hosting)
+        {
+            if (Time.unscaledTime >= nextLocalIpRefresh || string.IsNullOrEmpty(cachedLocalIp))
+            {
+                cachedLocalIp = BrawlServerDiscovery.LocalIpv4Display();
+                nextLocalIpRefresh = Time.unscaledTime + 3f;
+            }
+
+            string line = "本机 IP  " + cachedLocalIp;
+            if (disconnectedIpText != null)
+                disconnectedIpText.text = line;
+            if (connectedIpText != null)
+            {
+                connectedIpText.gameObject.SetActive(hosting);
+                if (hosting)
+                    connectedIpText.text = line;
+            }
+        }
+
+        string LocalIpText()
+        {
+            return string.IsNullOrEmpty(cachedLocalIp) ? BrawlServerDiscovery.LocalIpv4Display() : cachedLocalIp;
         }
 
         void BindHeader(string status, Color dot, string hint)
@@ -479,18 +509,23 @@ namespace Brawl
                 new Vector2(0f, -132f), new Vector2(-36f, 40f));
             host.onClick.AddListener(OnHost);
 
+            disconnectedIpText = CreateText(disconnectedRoot.transform, "LocalIp", 16, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(1f, 0.86f, 0.28f, 1f));
+            SetRect(disconnectedIpText.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f),
+                new Vector2(18f, -174f), new Vector2(-36f, 24f));
+            disconnectedIpText.text = "本机 IP  读取中";
+
             Text listLabel = CreateText(disconnectedRoot.transform, "ListLabel", 17, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
             SetRect(listLabel.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f),
-                new Vector2(18f, -182f), new Vector2(-124f, 26f));
+                new Vector2(18f, -204f), new Vector2(-124f, 26f));
             listLabel.text = "局域网房间";
 
             Button refresh = CreateButton(disconnectedRoot.transform, "Refresh", "刷新", ServerColor, 16);
             SetRect(refresh.transform as RectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
-                new Vector2(-18f, -178f), new Vector2(70f, 28f));
+                new Vector2(-18f, -200f), new Vector2(70f, 28f));
             refresh.onClick.AddListener(OnRefreshList);
 
             RectTransform listRoot = CreateRect(disconnectedRoot.transform, "ServerList", new Vector2(0f, 1f), new Vector2(1f, 1f),
-                new Vector2(0.5f, 1f), new Vector2(0f, -208f), new Vector2(-36f, 150f));
+                new Vector2(0.5f, 1f), new Vector2(0f, -230f), new Vector2(-36f, 150f));
             Image listBg = listRoot.gameObject.AddComponent<Image>();
             listBg.color = FieldColor;
             listBg.raycastTarget = true;
@@ -523,7 +558,7 @@ namespace Brawl
             emptyListText.text = "正在搜索房间…";
 
             RectTransform joinRow = CreateRect(disconnectedRoot.transform, "JoinRow", new Vector2(0f, 1f), new Vector2(1f, 1f),
-                new Vector2(0.5f, 1f), new Vector2(0f, -370f), new Vector2(-36f, 40f));
+                new Vector2(0.5f, 1f), new Vector2(0f, -392f), new Vector2(-36f, 40f));
             Button join = CreateButton(joinRow, "Join", "手动输入", HostColor, 17);
             SetRect(join.transform as RectTransform, new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(0f, 0.5f),
                 new Vector2(0f, 0f), new Vector2(100f, 0f));
@@ -557,6 +592,12 @@ namespace Brawl
             SetRect(cancel.transform as RectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
                 new Vector2(0f, -118f), new Vector2(-32f, 36f));
             cancel.onClick.AddListener(OnCancel);
+
+            connectedIpText = CreateText(connectedRoot.transform, "LocalIp", 17, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(1f, 0.86f, 0.28f, 1f));
+            SetRect(connectedIpText.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f),
+                new Vector2(16f, -82f), new Vector2(-32f, 26f));
+            connectedIpText.text = "本机 IP  读取中";
+            connectedIpText.gameObject.SetActive(false);
 
             stopHostButton = CreateButton(connectedRoot.transform, "StopHost", "停止主机", StopColor, 16);
             SetRect(stopHostButton.transform as RectTransform, new Vector2(0f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 0f),
