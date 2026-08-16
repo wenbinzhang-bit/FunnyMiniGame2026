@@ -16,6 +16,7 @@ namespace Brawl
     {
         const int ScoreBarMaxFallback = 99;
         const string Level01RulesArtworkResource = "UI/Rules/Level01Briefing";
+        const string Level02RulesArtworkResource = "UI/Rules/Level02Briefing";
         const string ResultPaperResource = "UI/Results/ResumePaper";
         const float ResultRevealInterval = 0.65f;
         const float ResultRevealDuration = 0.28f;
@@ -1869,6 +1870,7 @@ namespace Brawl
             if (RulesRoot != null)
                 RulesRoot.transform.SetAsLastSibling();
 
+            RefreshRulesArtwork();
             bool illustrated = ShouldUseIllustratedRules();
             if (RulesArtwork != null)
                 RulesArtwork.gameObject.SetActive(illustrated);
@@ -1947,9 +1949,32 @@ namespace Brawl
 
         bool ShouldUseIllustratedRules()
         {
-            return BrawlLevelCatalog.GetLevelIndex(BrawlLevelCatalog.ActiveSceneName()) == 0
+            int levelIndex = BrawlLevelCatalog.GetLevelIndex(BrawlLevelCatalog.ActiveSceneName());
+            return (levelIndex == 0 || levelIndex == 1)
                 && RulesArtwork != null
                 && RulesArtwork.texture != null;
+        }
+
+        void RefreshRulesArtwork()
+        {
+            if (RulesArtwork == null) return;
+
+            string resource = RulesArtworkResourceForActiveLevel();
+            Texture2D texture = string.IsNullOrEmpty(resource)
+                ? null
+                : Resources.Load<Texture2D>(resource);
+            if (RulesArtwork.texture != texture)
+                RulesArtwork.texture = texture;
+        }
+
+        static string RulesArtworkResourceForActiveLevel()
+        {
+            switch (BrawlLevelCatalog.GetLevelIndex(BrawlLevelCatalog.ActiveSceneName()))
+            {
+                case 0: return Level01RulesArtworkResource;
+                case 1: return Level02RulesArtworkResource;
+                default: return null;
+            }
         }
 
         void EnsureRulesPanel()
@@ -2057,7 +2082,7 @@ namespace Brawl
             if (RulesArtwork == null)
                 RulesArtwork = artworkTransform.gameObject.AddComponent<RawImage>();
             SetHudRect(RulesArtwork.rectTransform, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
-            RulesArtwork.texture = Resources.Load<Texture2D>(Level01RulesArtworkResource);
+            RefreshRulesArtwork();
             RulesArtwork.color = Color.white;
             RulesArtwork.raycastTarget = false;
             RulesArtwork.uvRect = new Rect(0f, 0f, 1f, 1f);
