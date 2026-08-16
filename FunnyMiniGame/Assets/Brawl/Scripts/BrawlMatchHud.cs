@@ -94,8 +94,6 @@ namespace Brawl
         public Text RulesBody;
         public Text RulesCountdown;
         public RawImage RulesArtwork;
-        public Button DebugTimerButton;
-        public Text DebugTimerLabel;
         public RectTransform PassCrosshairRoot;
         public Image[] PassCrosshairMarks;
 
@@ -175,7 +173,7 @@ namespace Brawl
             EnsureLobbyReadyPanel();
             EnsureLobbyStartConfirm();
             EnsureRulesPanel();
-            EnsureDebugTimerButton();
+            HideDebugTimerButton();
             EnsurePassCrosshair();
             ApplyHudVisualStyle();
         }
@@ -196,8 +194,6 @@ namespace Brawl
                 LobbyStartConfirmRoot.SetActive(false);
             if (RulesRoot != null)
                 RulesRoot.SetActive(true);
-            if (DebugTimerButton != null)
-                DebugTimerButton.gameObject.SetActive(true);
         }
 
         void LateUpdate()
@@ -356,7 +352,6 @@ namespace Brawl
             BindNextRoundButton(gm);
             BindLobbyButton(gm);
             BindRulesPanel(gm);
-            BindDebugTimerButton(gm);
             BindCursorHint();
             BindPassCrosshair(gm);
             if (NextRoundButton != null && NextRoundButton.gameObject.activeSelf)
@@ -1144,78 +1139,11 @@ namespace Brawl
                 BrawlGameManager.Instance.RequestNextRound();
         }
 
-        void BindDebugTimerButton(BrawlGameManager gm)
+        void HideDebugTimerButton()
         {
-            bool show = gm != null && gm.HudIsPlaying;
-            if (DebugTimerButton != null)
-                DebugTimerButton.gameObject.SetActive(show);
-            if (!show) return;
-            if (DebugTimerLabel != null)
-                DebugTimerLabel.text = "当局剩30秒";
-            DebugTimerButton.transform.SetAsLastSibling();
-        }
-
-        void OnDebugTimerClicked()
-        {
-            if (BrawlGameManager.Instance != null)
-                BrawlGameManager.Instance.DebugSetRemainingSeconds(30f);
-        }
-
-        void EnsureDebugTimerButton()
-        {
-            if (DebugTimerButton != null && DebugTimerLabel != null) return;
-
             Transform existing = transform.Find("DebugTimer");
             if (existing != null)
-            {
-                DebugTimerButton = existing.GetComponent<Button>();
-                DebugTimerLabel = existing.Find("Label")?.GetComponent<Text>();
-                if (DebugTimerButton != null && DebugTimerLabel != null)
-                {
-                    DebugTimerButton.onClick.RemoveListener(OnDebugTimerClicked);
-                    DebugTimerButton.onClick.AddListener(OnDebugTimerClicked);
-                    DebugTimerButton.gameObject.SetActive(false);
-                    return;
-                }
-            }
-
-            Font fallbackFont = TimerText != null && TimerText.font != null
-                ? TimerText.font
-                : Resources.GetBuiltinResource<Font>("Arial.ttf");
-
-            GameObject buttonObject = new GameObject("DebugTimer", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
-            RectTransform buttonRect = buttonObject.GetComponent<RectTransform>();
-            buttonRect.SetParent(transform, false);
-            buttonRect.anchorMin = new Vector2(1f, 1f);
-            buttonRect.anchorMax = new Vector2(1f, 1f);
-            buttonRect.pivot = new Vector2(1f, 1f);
-            buttonRect.anchoredPosition = new Vector2(-24f, -24f);
-            buttonRect.sizeDelta = new Vector2(168f, 40f);
-            Image image = buttonObject.GetComponent<Image>();
-            image.color = new Color(0.72f, 0.28f, 0.12f, 0.92f);
-            image.raycastTarget = true;
-            DebugTimerButton = buttonObject.GetComponent<Button>();
-            DebugTimerButton.onClick.AddListener(OnDebugTimerClicked);
-
-            GameObject labelObject = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
-            RectTransform labelRect = labelObject.GetComponent<RectTransform>();
-            labelRect.SetParent(buttonRect, false);
-            labelRect.anchorMin = Vector2.zero;
-            labelRect.anchorMax = Vector2.one;
-            labelRect.offsetMin = Vector2.zero;
-            labelRect.offsetMax = Vector2.zero;
-            DebugTimerLabel = labelObject.GetComponent<Text>();
-            DebugTimerLabel.font = fallbackFont;
-            DebugTimerLabel.fontSize = 16;
-            DebugTimerLabel.fontStyle = FontStyle.Bold;
-            DebugTimerLabel.alignment = TextAnchor.MiddleCenter;
-            DebugTimerLabel.color = Color.white;
-            DebugTimerLabel.raycastTarget = false;
-            DebugTimerLabel.text = "当局剩30秒";
-            Outline outline = labelObject.AddComponent<Outline>();
-            outline.effectColor = new Color(0f, 0f, 0f, 0.7f);
-            outline.effectDistance = new Vector2(1f, -1f);
-            buttonObject.SetActive(false);
+                existing.gameObject.SetActive(false);
         }
 
         void EnsureNextRoundButton()
