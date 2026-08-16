@@ -2,6 +2,7 @@ using FIMSpace.Basics;
 using Mirror;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
 
 namespace Brawl
 {
@@ -30,6 +31,20 @@ namespace Brawl
 
         public override void OnStartLocalPlayer()
         {
+            SceneManager.sceneLoaded += OnSceneLoaded;
+            BindFollowCamera();
+            releasedByUser = false;
+            LockCursor();
+        }
+
+        void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {
+            if (!isLocalPlayer) return;
+            BindFollowCamera();
+        }
+
+        void BindFollowCamera()
+        {
             Camera cam = Camera.main;
             if (cam == null)
             {
@@ -38,6 +53,9 @@ namespace Brawl
                 cam = go.AddComponent<Camera>();
                 go.AddComponent<AudioListener>();
             }
+
+            BrawlSession.AdoptActor(cam.gameObject);
+            DisableForeignCameras(cam);
 
             var tpp = cam.GetComponent<FBasic_TPPCameraBehaviour>();
             if (tpp == null) tpp = cam.gameObject.AddComponent<FBasic_TPPCameraBehaviour>();
@@ -57,9 +75,21 @@ namespace Brawl
             tpp.HandleCursorHotkeys = false;
             tpp.enabled = true;
             tppCamera = tpp;
+        }
 
-            releasedByUser = false;
-            LockCursor();
+        static void DisableForeignCameras(Camera keep)
+        {
+            Camera[] cameras = FindObjectsOfType<Camera>();
+            for (int i = 0; i < cameras.Length; i++)
+            {
+                Camera cam = cameras[i];
+                if (cam == null || cam == keep) continue;
+                if (cam.targetTexture != null) continue;
+                cam.enabled = false;
+                AudioListener listener = cam.GetComponent<AudioListener>();
+                if (listener != null)
+                    listener.enabled = false;
+            }
         }
 
         FBasic_TPPCameraBehaviour tppCamera;
@@ -72,7 +102,8 @@ namespace Brawl
             if (!isLocalPlayer) return;
 
             BrawlGameManager gm = BrawlGameManager.Instance;
-            if (gm != null && gm.HudIsRoundEnd)
+            bool unlockForUi = gm != null && (gm.HudIsRoundEnd || gm.HudShowLobbyActions || gm.HudIsFinalKpi);
+            if (unlockForUi)
             {
                 if (IsCursorCaptured)
                 {
@@ -126,26 +157,12 @@ namespace Brawl
 
         static bool IsPointerOverUi()
         {
-            if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject())
-                return true;
-
-            Vector2 guiMouse = new Vector2(Input.mousePosition.x, Screen.height - Input.mousePosition.y);
-            NetworkManagerHUD hud = NetworkManager.singleton != null
-                ? NetworkManager.singleton.GetComponent<NetworkManagerHUD>()
-                : null;
-            if (hud != null && hud.enabled)
-            {
-                int height = NetworkClient.isConnected || NetworkServer.active ? 120 : 240;
-                var hudRect = new Rect(10 + hud.offsetX, 40 + hud.offsetY, 300, height);
-                if (hudRect.Contains(guiMouse)) return true;
-            }
-
-            var lobbyRect = new Rect(250f, Screen.height - 88f, 228f, 72f);
-            return lobbyRect.Contains(guiMouse);
+            return EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
         }
 
         public override void OnStopLocalPlayer()
         {
+            SceneManager.sceneLoaded -= OnSceneLoaded;
             Camera cam = Camera.main;
             if (cam == null) return;
 

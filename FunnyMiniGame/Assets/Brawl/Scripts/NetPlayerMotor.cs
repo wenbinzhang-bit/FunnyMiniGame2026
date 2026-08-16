@@ -43,7 +43,7 @@ namespace Brawl
         public int Score { get => score; set => score = value; }
 
         public uint NetId => netId;
-        public Transform Transform => transform;
+        public Transform Transform => this != null ? transform : null;
         public PlayerAttributes Attributes { get; private set; }
         public bool IsDead => false;
 
@@ -75,6 +75,7 @@ namespace Brawl
 
         public override void OnStartServer()
         {
+            BrawlSession.AdoptActor(gameObject);
             StartCoroutine(ServerInitRagdoll());
         }
 

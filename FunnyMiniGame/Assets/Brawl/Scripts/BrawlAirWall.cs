@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace Brawl
 {
@@ -27,21 +28,123 @@ namespace Brawl
 
         public static BrawlAirWall Ensure(BrawlGameManager gm)
         {
-            if (Instance != null) return Instance;
-            if (gm != null && gm.AirWall != null)
+            if (Instance == null)
+                Instance = null;
+            if (gm != null && gm.AirWall == null)
+                gm.AirWall = null;
+
+            Scene active = SceneManager.GetActiveScene();
+            if (Instance != null && Instance.gameObject.scene == active)
+                return Instance;
+
+            Instance = null;
+            if (gm != null && gm.AirWall != null && gm.AirWall.gameObject.scene == active)
             {
                 Instance = gm.AirWall;
                 return Instance;
             }
 
             Instance = FindObjectOfType<BrawlAirWall>(true);
+            if (gm != null)
+                gm.AirWall = Instance;
             return Instance;
+        }
+
+        public static BrawlAirWall EnsureInLevel(BrawlGameManager gm)
+        {
+            BrawlAirWall wall = Ensure(gm);
+            if (wall != null) return wall;
+            if (!BrawlLevelCatalog.IsLevel(SceneManager.GetActiveScene().name))
+                return null;
+
+            wall = CreateRuntimeInActiveScene();
+            if (gm != null)
+                gm.AirWall = wall;
+            return wall;
+        }
+
+        public static BrawlAirWall CreateRuntimeInActiveScene()
+        {
+            var root = new GameObject("AirWall");
+            root.transform.position = new Vector3(6.3f, 0f, -2f);
+            var wall = root.AddComponent<BrawlAirWall>();
+            wall.InnerSize = new Vector3(12f, 8f, 16f);
+            wall.Thickness = 0.6f;
+            wall.LockWallsToSize = true;
+            wall.WallNorth = CreateSlab(root.transform, "Wall_N");
+            wall.WallSouth = CreateSlab(root.transform, "Wall_S");
+            wall.WallEast = CreateSlab(root.transform, "Wall_E");
+            wall.WallWest = CreateSlab(root.transform, "Wall_W");
+            wall.WallCeiling = CreateSlab(root.transform, "Wall_Ceiling");
+            wall.ApplyLayout();
+            Instance = wall;
+            return wall;
+        }
+
+        static Transform CreateSlab(Transform parent, string name)
+        {
+            GameObject slab = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            slab.name = name;
+            slab.transform.SetParent(parent, false);
+            var rend = slab.GetComponent<Renderer>();
+            if (rend != null)
+            {
+                rend.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                rend.receiveShadows = false;
+            }
+
+            return slab.transform;
+        }
+
+        public static void ClearStale()
+        {
+            if (Instance == null)
+                Instance = null;
+            cachedWalls = null;
+            cachedSceneHandle = -1;
+        }
+
+        static BrawlAirWall[] cachedWalls;
+        static int cachedSceneHandle = -1;
+
+        public static void SetAllActive(bool active)
+        {
+            int handle = SceneManager.GetActiveScene().handle;
+            if (cachedWalls == null || cachedWalls.Length == 0 || cachedWalls[0] == null || cachedSceneHandle != handle)
+            {
+                cachedWalls = FindObjectsOfType<BrawlAirWall>(true);
+                cachedSceneHandle = handle;
+            }
+
+            if (cachedWalls == null) return;
+            for (int i = 0; i < cachedWalls.Length; i++)
+            {
+                if (cachedWalls[i] != null)
+                    cachedWalls[i].SetActiveWall(active);
+            }
         }
 
         public void SetActiveWall(bool active)
         {
             if (!gameObject.activeSelf)
                 gameObject.SetActive(true);
+
+            if (active && (Mathf.Abs(transform.localScale.x) < 0.99f || Mathf.Abs(transform.localScale.z) < 0.99f))
+                transform.localScale = Vector3.one;
+
+            BindChildren();
+            for (int i = 0; i < transform.childCount; i++)
+            {
+                Transform child = transform.GetChild(i);
+                if (child != null)
+                    child.gameObject.SetActive(active);
+            }
+
+            SetChildActive(WallNorth, active);
+            SetChildActive(WallSouth, active);
+            SetChildActive(WallEast, active);
+            SetChildActive(WallWest, active);
+            SetChildActive(WallCeiling, active);
 
             foreach (Collider col in GetComponentsInChildren<Collider>(true))
             {
@@ -50,8 +153,24 @@ namespace Brawl
 
             foreach (Renderer rend in GetComponentsInChildren<Renderer>(true))
             {
-                if (rend != null) rend.enabled = active;
+                if (rend == null) continue;
+                rend.enabled = active;
+                if (active && rend.material != null)
+                {
+                    Color color = rend.material.color;
+                    if (color.a < 0.2f)
+                    {
+                        color.a = 0.35f;
+                        rend.material.color = color;
+                    }
+                }
             }
+        }
+
+        static void SetChildActive(Transform wall, bool active)
+        {
+            if (wall != null)
+                wall.gameObject.SetActive(active);
         }
 
         public bool Contains(Vector3 worldPos, float inset = 0.35f)

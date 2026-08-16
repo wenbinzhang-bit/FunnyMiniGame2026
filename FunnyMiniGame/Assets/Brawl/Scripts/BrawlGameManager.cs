@@ -2,14 +2,14 @@ using System.Collections.Generic;
 using System.Linq;
 using Mirror;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace Brawl
 {
     /// <summary>
-    /// MiniGame_01 服务端权威对局:
-    /// 进场后空气墙困住玩家，30 秒等待倒计时结束再开局；
-    /// 持有电脑每 0.5 秒得分；被打后电脑落地、持有者被打飞；倒计时结束按分数排名。
-    /// 掉出场地会回出生点，不淘汰；受击只触发布娃娃倒地和起身。
+    /// 跨关卡对局：Launcher 大厅全员准备后进入 MiniGame_00 → MiniGame_01，共 2 关；
+    /// 每关先显示规则，再空气墙等待其他玩家进场景，倒计时结束才开打。
+    /// 第 2 关结束后汇总整场 KPI。
     /// </summary>
     public class BrawlGameManager : NetworkBehaviour
     {
@@ -43,30 +43,63 @@ namespace Brawl
         [Min(1)] public int HudScoreMax = 99;
 
         [Tooltip("进场后空气墙持续时间，倒计时结束且人数足够后开局并撤墙")]
-        [Min(1f)] public float WaitingDurationSeconds = 30f;
+        [Min(1f)] public float WaitingDurationSeconds = 10f;
+
+        [Tooltip("每局开局前规则说明显示秒数，到时自动消失并进入准备")]
+        [Min(1f)] public float RulesDurationSeconds = 6f;
+
+        [Tooltip("Launcher 大厅等待其他玩家加入的秒数，到时进入第一关")]
+        [Min(1f)] public float LobbyWaitSeconds = 30f;
 
         [Tooltip("场景里的空气墙实体，可在 Hierarchy 里拖墙调整")]
         public BrawlAirWall AirWall;
 
-        enum EState : byte { Waiting, Playing, RoundEnd }
+        enum EState : byte { Waiting, Playing, RoundEnd, Rules, Lobby, FinalKpi }
 
-        public bool HudIsPlaying => state == EState.Playing;
-        public bool HudIsWaiting => state == EState.Waiting;
-        public bool HudIsRoundEnd => state == EState.RoundEnd;
+        public bool HudIsPlaying => IsHudState(EState.Playing);
+        public bool HudIsWaiting => IsHudState(EState.Waiting);
+        public bool HudIsRoundEnd => IsHudState(EState.RoundEnd);
+        public bool HudIsShowingRules => IsHudState(EState.Rules);
+        public bool HudIsLobby =>
+            state == EState.Lobby
+            && !changingScene
+            && BrawlLevelCatalog.ActiveSceneIsLauncher();
+        public bool HudIsFinalKpi => state == EState.FinalKpi && !changingScene;
+        public int HudMatchSeq => matchSeq;
+        public bool HudHasNextLevel => BrawlLevelCatalog.HasNextLevel(currentLevelName);
+        public string HudRulesTitle => string.IsNullOrEmpty(rulesTitle) ? "本局规则" : rulesTitle;
+        public string HudRulesBody => rulesBody;
+        public string HudKpiBoardText => kpiBoardText;
         public bool HudAirWallActive => airWallActive;
         public bool HudContinueRequested => nextRoundRequested;
+        public bool HudIsHost => NetworkServer.active;
+        public bool HudShowLobbyActions =>
+            BrawlLevelCatalog.ActiveSceneIsLauncher()
+            && state == EState.Lobby
+            && !changingScene;
+        public bool HudLobbyAllReady => lobbyAllReady;
         public string HudStatusText => statusText;
+        public string HudLobbyReadyLine => lobbyReadyLine;
         public float HudRemainingSeconds
         {
             get
             {
+                if (changingScene) return 0f;
                 if (state == EState.Playing)
                     return Mathf.Max(0f, (float)(roundEndsAt - NetworkTime.time));
+                if (state == EState.Lobby)
+                    return 0f;
+                if (state == EState.Rules)
+                {
+                    if (rulesEndsAt > 0)
+                        return Mathf.Max(0f, (float)(rulesEndsAt - NetworkTime.time));
+                    return RulesDurationSeconds;
+                }
                 if (state == EState.Waiting)
                 {
                     if (waitingEndsAt > 0)
                         return Mathf.Max(0f, (float)(waitingEndsAt - NetworkTime.time));
-                    return WaitingDurationSeconds;
+                    return 0f;
                 }
                 if (state == EState.RoundEnd)
                 {
@@ -78,35 +111,70 @@ namespace Brawl
             }
         }
 
+        bool IsHudState(EState want)
+        {
+            if (state != want || changingScene) return false;
+            if (want == EState.Lobby)
+                return BrawlLevelCatalog.ActiveSceneIsLauncher();
+            if (want == EState.FinalKpi)
+                return true;
+            return BrawlLevelCatalog.ActiveSceneIsLevel()
+                && BrawlLevelCatalog.NormalizeName(currentLevelName) == BrawlLevelCatalog.ActiveSceneName();
+        }
+
         [SyncVar] EState state = EState.Waiting;
         [SyncVar] string statusText = "";
         [SyncVar] double roundEndsAt;
         [SyncVar] double waitingEndsAt;
+        [SyncVar] double rulesEndsAt;
         [SyncVar] double continueEndsAt;
+        [SyncVar] double lobbyEndsAt;
         [SyncVar] bool nextRoundRequested;
         [SyncVar(hook = nameof(OnAirWallActiveChanged))] bool airWallActive = true;
         [SyncVar] string rankText = "";
+        [SyncVar] string currentLevelName = "";
+        [SyncVar] string rulesTitle = "本局规则";
+        [SyncVar] string rulesBody = "";
+        [SyncVar] string kpiBoardText = "";
+        [SyncVar] string lobbyReadyLine = "";
+        [SyncVar] bool lobbyAllReady;
+        [SyncVar] int matchSeq;
 
         class PlayerEntry
         {
             public NetworkConnectionToClient conn;
             public IBrawlPlayer motor;
+            public int connectionId = -1;
+            public int botIndex = -1;
         }
 
         readonly List<PlayerEntry> players = new List<PlayerEntry>();
+        int nextBotIndex;
         double nextScoreTime;
         bool stoppingSession;
+        [SyncVar] bool changingScene;
+        string pendingLevelName = "";
+        bool levelSessionStarted;
 
         void Awake()
         {
+            if (Instance != null && Instance != this)
+                return;
             Instance = this;
+            BrawlRunRecord.Ensure(BrawlSession.Instance != null ? BrawlSession.Instance.transform : transform);
             ApplyAirWall();
         }
 
         public override void OnStartServer()
         {
             base.OnStartServer();
-            ServerEnterWaiting(false);
+            BrawlRunRecord.Ensure(BrawlSession.Instance != null ? BrawlSession.Instance.transform : transform);
+            Record.BeginNewRun();
+            currentLevelName = SceneManager.GetActiveScene().name;
+            if (BrawlLevelCatalog.IsLauncher(currentLevelName) || !BrawlLevelCatalog.IsLevel(currentLevelName))
+                ServerEnterLobby();
+            else
+                ServerEnterMatchHold(false);
         }
 
         public override void OnStartClient()
@@ -127,17 +195,42 @@ namespace Brawl
             var motor = conn.identity.GetComponent<IBrawlPlayer>();
             if (motor == null) return;
 
-            players.Add(new PlayerEntry { conn = conn, motor = motor });
+            if (players.Exists(p => p.motor == motor))
+            {
+                motor.InputActive = state == EState.Lobby || state == EState.Waiting || state == EState.Playing;
+                return;
+            }
+
+            players.Add(new PlayerEntry
+            {
+                conn = conn,
+                motor = motor,
+                connectionId = conn.connectionId
+            });
+            Record.EnsureSeat(conn.connectionId, -1, BrawlHudNames.Label(motor.NetId, PlayersForHud()));
+            motor.InputActive = state == EState.Lobby || state == EState.Waiting || state == EState.Playing;
+            if (state == EState.Lobby && motor is NetFAnnequinController fan)
+                BrawlLobbyReady.ApplyForLobby(fan, false);
         }
 
         [Server]
         public void ServerOnBotJoined(IBrawlPlayer motor)
         {
-            if (motor == null || motor.Transform == null) return;
+            if (!IsLiveMotor(motor)) return;
             if (players.Exists(p => p.motor == motor)) return;
 
-            players.Add(new PlayerEntry { conn = null, motor = motor });
-            motor.InputActive = state != EState.RoundEnd;
+            int botIndex = nextBotIndex++;
+            players.Add(new PlayerEntry
+            {
+                conn = null,
+                motor = motor,
+                connectionId = -1,
+                botIndex = botIndex
+            });
+            Record.EnsureSeat(-1, botIndex, BrawlHudNames.Label(motor.NetId, PlayersForHud()));
+            motor.InputActive = state == EState.Lobby || state == EState.Waiting || state == EState.Playing;
+            if (motor is NetFAnnequinController bot)
+                BrawlLobbyReady.ApplyForLobby(bot, true);
 
             Transform start = NetworkManager.singleton != null
                 ? NetworkManager.singleton.GetStartPosition()
@@ -153,13 +246,26 @@ namespace Brawl
             players.RemoveAll(p => p.conn == conn);
         }
 
-        [ServerCallback]
         void Update()
         {
-            players.RemoveAll(p => p.motor == null || p.motor.Transform == null);
+            if (!NetworkServer.active) return;
+
+            if (TryOpenArrivedLevel())
+                return;
+
+            if (changingScene)
+                return;
+
+            PurgeDeadPlayers();
 
             switch (state)
             {
+                case EState.Lobby:
+                    ServerUpdateLobby();
+                    break;
+                case EState.Rules:
+                    ServerUpdateRules();
+                    break;
                 case EState.Waiting:
                     ServerUpdateWaiting();
                     break;
@@ -172,15 +278,388 @@ namespace Brawl
             }
         }
 
+        void LateUpdate()
+        {
+            bool showWall = ShouldShowMatchAirWall();
+            if (showWall)
+                BrawlAirWall.EnsureInLevel(this);
+            BrawlAirWall.SetAllActive(showWall);
+        }
+
+        bool ShouldShowMatchAirWall()
+        {
+            if (BrawlLevelCatalog.ActiveSceneIsLauncher())
+                return false;
+            if (!BrawlLevelCatalog.ActiveSceneIsLevel())
+                return false;
+            return state != EState.Playing && state != EState.RoundEnd && state != EState.FinalKpi;
+        }
+
+        [Server]
+        public void ServerPrepareSceneChange()
+        {
+            changingScene = true;
+            levelSessionStarted = false;
+            BrawlSession.AdoptAllPlayers();
+            ServerDropAllComputers();
+            PurgeDeadPlayers();
+            ServerClearRoundRuntime("正在进入下一关");
+        }
+
+        [Server]
+        public void ServerOnSceneReady(string sceneName)
+        {
+            string name = BrawlLevelCatalog.NormalizeName(sceneName);
+            changingScene = false;
+            pendingLevelName = "";
+            currentLevelName = name;
+            AirWall = null;
+            BrawlAirWall.ClearStale();
+            BrawlLobbyStage.Ensure();
+            try
+            {
+                ServerRebuildPlayers();
+            }
+            catch (System.Exception ex)
+            {
+                Debug.LogWarning("BRAWL_SMOKE: REBUILD_PLAYERS " + ex.Message);
+                PurgeDeadPlayers();
+            }
+
+            if (BrawlLevelCatalog.IsLauncher(name))
+            {
+                levelSessionStarted = true;
+                ServerEnterLobby();
+                return;
+            }
+
+            if (BrawlLevelCatalog.IsLevel(name))
+                ServerBeginNewLevel();
+        }
+
+        bool TryOpenArrivedLevel()
+        {
+            if (SceneLoadInProgress())
+                return changingScene;
+
+            string active = BrawlLevelCatalog.ActiveSceneName();
+            string pending = BrawlLevelCatalog.NormalizeName(pendingLevelName);
+            bool arrivedPending = !string.IsNullOrEmpty(pending) && pending == active;
+            bool arrivedUnknownLevel = string.IsNullOrEmpty(pending)
+                && BrawlLevelCatalog.IsLevel(active)
+                && BrawlLevelCatalog.NormalizeName(currentLevelName) != active;
+            bool stuckOnNewScene = string.IsNullOrEmpty(pending)
+                && BrawlLevelCatalog.IsLevel(active)
+                && !levelSessionStarted
+                && (state == EState.RoundEnd || state == EState.FinalKpi || nextRoundRequested);
+
+            if (!arrivedPending && !arrivedUnknownLevel && !stuckOnNewScene)
+                return false;
+
+            Debug.Log($"BRAWL_SMOKE: OPEN_ARRIVED_LEVEL active={active} pending={pending} state={state} started={levelSessionStarted}");
+            ServerOnSceneReady(active);
+            return true;
+        }
+
+        static bool SceneLoadInProgress()
+        {
+            return NetworkManager.loadingSceneAsync != null && !NetworkManager.loadingSceneAsync.isDone;
+        }
+
+        void ServerClearRoundRuntime(string message)
+        {
+            nextRoundRequested = false;
+            stoppingSession = false;
+            roundEndsAt = 0;
+            waitingEndsAt = 0;
+            rulesEndsAt = 0;
+            continueEndsAt = 0;
+            lobbyEndsAt = 0;
+            lobbyAllReady = false;
+            lobbyReadyLine = "";
+            rankText = "";
+            if (!string.IsNullOrEmpty(message))
+                statusText = message;
+        }
+
+        [Server]
+        void ServerBeginNewLevel()
+        {
+            levelSessionStarted = true;
+            pendingLevelName = "";
+            matchSeq++;
+            ServerClearRoundRuntime("");
+            PurgeDeadPlayers();
+            foreach (var p in players)
+            {
+                if (!IsLiveMotor(p?.motor)) continue;
+                p.motor.Score = 0;
+                p.motor.InputActive = false;
+                if (p.motor is NetFAnnequinController fan)
+                {
+                    BrawlLobbyReady.Clear(fan);
+                    fan.ServerResetTurbo();
+                    fan.ServerForceDropComputer();
+                }
+            }
+
+            Record.ResetCurrentRoundScores();
+            ServerPlacePlayersInLevel();
+            Debug.Log($"BRAWL_SMOKE: NEW_LEVEL_RESET {currentLevelName} match={matchSeq} players={players.Count} duration={RoundDurationSeconds}");
+            ServerEnterMatchHold(true);
+            StartCoroutine(RebuildPlayersAfterLevelLoad());
+        }
+
+        void ServerPlacePlayersInLevel()
+        {
+            int i = 0;
+            foreach (var p in players)
+            {
+                if (!IsLiveMotor(p?.motor)) continue;
+                Transform start = NetworkManager.singleton != null
+                    ? NetworkManager.singleton.GetStartPosition()
+                    : null;
+                Vector3 pos = start != null ? start.position : new Vector3(i * 2f, 3f, 0f);
+                p.motor.SpawnPosition = pos;
+                p.motor.ServerTeleport(pos + Vector3.up * 1f);
+                i++;
+            }
+        }
+
+        System.Collections.IEnumerator RebuildPlayersAfterLevelLoad()
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                yield return null;
+                if (!NetworkServer.active || !levelSessionStarted) yield break;
+                ServerRebuildPlayers();
+                if (BrawlNetworkManager.SingletonBrawl != null)
+                    BrawlNetworkManager.SingletonBrawl.ServerEnsureMatchActors();
+            }
+        }
+
+        [Server]
+        void ServerEnterLobby()
+        {
+            state = EState.Lobby;
+            pendingLevelName = "";
+            levelSessionStarted = true;
+            currentLevelName = BrawlLevelCatalog.LauncherScene;
+            lobbyEndsAt = 0;
+            rulesEndsAt = 0;
+            waitingEndsAt = 0;
+            lobbyAllReady = false;
+            Record.BeginNewRun();
+            ServerSetAirWall(false);
+            foreach (var p in players)
+            {
+                if (p?.motor != null)
+                    p.motor.InputActive = true;
+                if (p?.motor is NetFAnnequinController fan)
+                    BrawlLobbyReady.ApplyForLobby(fan, !IsHumanPlayer(p));
+            }
+            RefreshLobbyReadyStatus();
+            Debug.Log("BRAWL_SMOKE: LOBBY_STARTED wait_for_all_ready");
+        }
+
+        [Server]
+        void ServerUpdateLobby()
+        {
+            foreach (var p in players)
+            {
+                ServerRescueIfNeeded(p);
+                if (p?.motor != null)
+                    p.motor.InputActive = true;
+                if (p?.motor is NetFAnnequinController fan)
+                    BrawlLobbyReady.KeepBotReady(fan, !IsHumanPlayer(p));
+            }
+
+            BrawlLobbyReady.Tally tally = TallyLobbyReady();
+            lobbyReadyLine = tally.Line;
+            lobbyAllReady = tally.CanEnterFirstLevel(MinPlayersToStart);
+            if (lobbyAllReady)
+            {
+                statusText = $"{lobbyReadyLine}    全员已准备，正在进入第一关";
+                ServerLoadFirstLevel();
+                return;
+            }
+
+            statusText = $"{lobbyReadyLine}    全员准备后进入第一关";
+        }
+
+        [Server]
+        void ServerLoadFirstLevel()
+        {
+            string first = BrawlLevelCatalog.GetFirstLevel();
+            if (string.IsNullOrEmpty(first))
+            {
+                statusText = "没有找到 MiniGame 关卡，请把 MiniGame_00 加入 Build Settings";
+                Debug.LogWarning("BrawlGameManager: 没有可用关卡");
+                return;
+            }
+
+            ServerChangeToLevel(first);
+        }
+
+        void ServerChangeToLevel(string sceneName)
+        {
+            Debug.Log($"BRAWL_SMOKE: CHANGE_SCENE_ENTER name={sceneName} changing={changingScene} nm={NetworkManager.singleton}");
+            if (string.IsNullOrEmpty(sceneName))
+            {
+                Debug.LogWarning("BrawlGameManager: 切关名为空");
+                return;
+            }
+
+            pendingLevelName = BrawlLevelCatalog.NormalizeName(sceneName);
+            levelSessionStarted = false;
+            changingScene = true;
+            ServerClearRoundRuntime($"正在进入 {BrawlLevelCatalog.GetLevelTitle(sceneName)}");
+            ClearAllLobbyReady();
+            Debug.Log("BRAWL_SMOKE: CHANGE_SCENE " + pendingLevelName);
+
+            if (NetworkManager.singleton == null)
+            {
+                Debug.LogError("BrawlGameManager: NetworkManager.singleton 为空，改用本地切关");
+                StartCoroutine(ForceLoadLevel(pendingLevelName));
+                return;
+            }
+
+            var brawlNet = NetworkManager.singleton as BrawlNetworkManager;
+            bool started = brawlNet != null
+                ? brawlNet.TryChangeLevel(pendingLevelName)
+                : StartFallbackSceneChange(pendingLevelName);
+            if (started) return;
+
+            Debug.LogWarning("BRAWL_SMOKE: Mirror 切关失败，改用 ForceLoadLevel " + pendingLevelName);
+            StartCoroutine(ForceLoadLevel(pendingLevelName));
+        }
+
+        bool StartFallbackSceneChange(string sceneName)
+        {
+            NetworkManager.singleton.ServerChangeScene(sceneName);
+            return NetworkManager.loadingSceneAsync != null;
+        }
+
+        System.Collections.IEnumerator ForceLoadLevel(string sceneName)
+        {
+            int buildIndex = BrawlLevelCatalog.GetBuildIndex(sceneName);
+            Debug.Log($"BRAWL_SMOKE: FORCE_LOAD {sceneName} buildIndex={buildIndex}");
+            if (buildIndex < 0)
+            {
+                changingScene = false;
+                statusText = $"切关失败：Build Settings 没有 {sceneName}";
+                yield break;
+            }
+
+            changingScene = true;
+            BrawlSession.AdoptAllPlayers();
+            AsyncOperation op = SceneManager.LoadSceneAsync(buildIndex, LoadSceneMode.Single);
+            if (op == null)
+            {
+                changingScene = false;
+                statusText = $"LoadSceneAsync 失败 {sceneName}";
+                yield break;
+            }
+
+            while (!op.isDone)
+                yield return null;
+
+            NetworkServer.SpawnObjects();
+            if (NetworkManager.singleton != null)
+                NetworkManager.singleton.OnClientSceneChanged();
+            ServerOnSceneReady(sceneName);
+        }
+
+        void RecoverStuckSceneChange()
+        {
+            if (!changingScene && string.IsNullOrEmpty(pendingLevelName)) return;
+            if (SceneLoadInProgress()) return;
+            string active = BrawlLevelCatalog.ActiveSceneName();
+            string pending = BrawlLevelCatalog.NormalizeName(pendingLevelName);
+            if (!string.IsNullOrEmpty(pending) && pending == active)
+            {
+                Debug.Log("BRAWL_SMOKE: RECOVER_ARRIVED " + active);
+                ServerOnSceneReady(active);
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(pending) && pending != active)
+            {
+                Debug.LogWarning("BRAWL_SMOKE: RECOVER_FORCE_LOAD " + pending);
+                StartCoroutine(ForceLoadLevel(pending));
+                return;
+            }
+
+            Debug.Log("BRAWL_SMOKE: RECOVER_STUCK_SCENE_CHANGE");
+            changingScene = false;
+        }
+
+        [Server]
+        void ServerEnterMatchHold(bool resetRank)
+        {
+            levelSessionStarted = true;
+            ClearAllLobbyReady();
+            AirWall = null;
+            BrawlAirWall.ClearStale();
+            BrawlAirWall.EnsureInLevel(this);
+            ServerEnterRules(resetRank);
+        }
+
+        [Server]
+        void ServerEnterRules(bool resetRank)
+        {
+            state = EState.Rules;
+            currentLevelName = SceneManager.GetActiveScene().name;
+            rulesEndsAt = NetworkTime.time + Mathf.Max(1f, RulesDurationSeconds);
+            waitingEndsAt = 0;
+            if (resetRank) rankText = "";
+            ServerSetAirWall(true);
+            BindLevelRules();
+            foreach (var p in players)
+            {
+                if (p?.motor != null)
+                    p.motor.InputActive = false;
+            }
+            statusText = $"请阅读{HudRulesTitle}";
+            Debug.Log($"BRAWL_SMOKE: RULES_STARTED level={currentLevelName} duration={RulesDurationSeconds}");
+        }
+
+        [Server]
+        void ServerUpdateRules()
+        {
+            foreach (var p in players)
+            {
+                ServerRescueIfNeeded(p);
+                ServerContainInAirWall(p);
+                if (p?.motor != null)
+                    p.motor.InputActive = false;
+            }
+
+            ServerRescueLooseComputers();
+            if (rulesEndsAt <= 0)
+                rulesEndsAt = NetworkTime.time + Mathf.Max(1f, RulesDurationSeconds);
+
+            float remain = Mathf.Max(0f, (float)(rulesEndsAt - NetworkTime.time));
+            statusText = $"请阅读本局规则，{Mathf.CeilToInt(remain)} 秒后进入空气墙等待区";
+            if (remain <= 0f)
+                ServerEnterWaiting(false);
+        }
+
         [Server]
         void ServerEnterWaiting(bool resetRank)
         {
             state = EState.Waiting;
-            waitingEndsAt = NetworkTime.time + Mathf.Max(1f, WaitingDurationSeconds);
+            rulesEndsAt = 0;
+            waitingEndsAt = 0;
             if (resetRank) rankText = "";
             ServerSetAirWall(true);
-            statusText = $"空气墙倒计时 {FormatTime(WaitingDurationSeconds)} 后消失";
-            Debug.Log($"BRAWL_SMOKE: WAITING_STARTED duration={WaitingDurationSeconds}");
+            foreach (var p in players)
+            {
+                if (p?.motor != null)
+                    p.motor.InputActive = true;
+            }
+            statusText = "空气墙等待区：等待其他玩家进入场景";
+            Debug.Log("BRAWL_SMOKE: WAITING_STARTED hold_for_scene_ready");
         }
 
         [Server]
@@ -194,27 +673,48 @@ namespace Brawl
 
             ServerRescueLooseComputers();
             rankText = RankLine();
+            ServerSetAirWall(true);
+
+            if (!AllHumansInScene())
+            {
+                waitingEndsAt = 0;
+                statusText = $"空气墙等待区  已进入 {CountHumanPlayers()}/{ExpectedHumanConnections()}  等待其他玩家场景加载";
+                return;
+            }
 
             if (waitingEndsAt <= 0)
+            {
                 waitingEndsAt = NetworkTime.time + Mathf.Max(1f, WaitingDurationSeconds);
+                Debug.Log($"BRAWL_SMOKE: WAITING_COUNTDOWN duration={WaitingDurationSeconds}");
+            }
 
-            ServerSetAirWall(true);
             float remain = Mathf.Max(0f, (float)(waitingEndsAt - NetworkTime.time));
-            statusText = $"空气墙倒计时 {FormatTime(remain)} 后消失  玩家 {players.Count}/{MinPlayersToStart}";
+            statusText = $"空气墙倒计时 {FormatTime(remain)} 后正式开始  玩家 {CountHumanPlayers()}";
 
-            if (remain <= 0f && players.Count >= MinPlayersToStart)
+            if (remain <= 0f)
+            {
+                ServerRebuildPlayers();
+                if (!AllHumansInScene())
+                {
+                    waitingEndsAt = 0;
+                    statusText = "空气墙等待区：等待其他玩家进入场景";
+                    return;
+                }
+
                 ServerStartRound();
+            }
         }
 
         [Server]
         void ServerUpdateRoundEnd()
         {
-            if (stoppingSession) return;
+            if (stoppingSession || changingScene || !levelSessionStarted) return;
+            if (!string.IsNullOrEmpty(pendingLevelName)) return;
 
             if (nextRoundRequested)
             {
                 nextRoundRequested = false;
-                ServerEnterWaiting(true);
+                ServerAdvanceAfterRound();
                 return;
             }
 
@@ -222,16 +722,96 @@ namespace Brawl
                 continueEndsAt = NetworkTime.time + ResolveContinueSeconds();
 
             float remain = Mathf.Max(0f, (float)(continueEndsAt - NetworkTime.time));
-            statusText = $"点击「下一局」继续当前玩法，否则 {FormatTime(remain)} 后回到等待";
+            string action = HudHasNextLevel ? "下一关" : "查看总成绩";
+            statusText = $"点击「{action}」继续，否则 {FormatTime(remain)} 后自动继续";
             if (remain <= 0f)
-                ServerEnterWaiting(true);
+                ServerAdvanceAfterRound();
+        }
+
+        public void RequestLobbyStart()
+        {
+            if (!HudShowLobbyActions) return;
+
+            NetFAnnequinController local = NetworkClient.localPlayer != null
+                ? NetworkClient.localPlayer.GetComponent<NetFAnnequinController>()
+                : null;
+            if (local != null)
+                local.CmdSetLobbyReady(true);
+
+            if (NetworkServer.active)
+            {
+                ServerTryStartFromLobby();
+                return;
+            }
+
+            if (local != null)
+                local.CmdRequestLobbyStart();
+        }
+
+        [Server]
+        public void ServerTryStartFromLobby()
+        {
+            if (state != EState.Lobby || changingScene) return;
+            BrawlLobbyReady.Tally tally = TallyLobbyReady();
+            lobbyReadyLine = tally.Line;
+            lobbyAllReady = tally.CanEnterFirstLevel(MinPlayersToStart);
+            if (!lobbyAllReady)
+            {
+                statusText = $"{lobbyReadyLine}    需全员准备后才能进入第一关";
+                return;
+            }
+
+            ServerLoadFirstLevel();
+        }
+
+        public void RequestLobbyReadyToggle()
+        {
+            if (!HudShowLobbyActions) return;
+            NetFAnnequinController local = NetworkClient.localPlayer != null
+                ? NetworkClient.localPlayer.GetComponent<NetFAnnequinController>()
+                : null;
+            if (local == null) return;
+            local.CmdSetLobbyReady(!local.LobbyReady);
+        }
+
+        public bool HudLocalIsReady()
+        {
+            NetFAnnequinController local = NetworkClient.localPlayer != null
+                ? NetworkClient.localPlayer.GetComponent<NetFAnnequinController>()
+                : null;
+            return local != null && local.LobbyReady;
+        }
+
+        public void DebugSetRemainingSeconds(float seconds)
+        {
+            seconds = Mathf.Max(0.1f, seconds);
+            if (NetworkServer.active)
+            {
+                ServerDebugSetRemainingSeconds(seconds);
+                return;
+            }
+
+            NetFAnnequinController local = NetworkClient.localPlayer != null
+                ? NetworkClient.localPlayer.GetComponent<NetFAnnequinController>()
+                : null;
+            if (local != null)
+                local.CmdDebugSetRemainingSeconds(seconds);
+        }
+
+        [Server]
+        public void ServerDebugSetRemainingSeconds(float seconds)
+        {
+            if (state != EState.Playing) return;
+            roundEndsAt = NetworkTime.time + Mathf.Max(0.1f, seconds);
+            Debug.Log($"BRAWL_DEBUG: current round remaining={seconds:0.#}s");
         }
 
         public void RequestNextRound()
         {
-            if (!HudIsRoundEnd || nextRoundRequested) return;
+            RecoverStuckSceneChange();
+            Debug.Log($"BRAWL_SMOKE: REQUEST_NEXT_ROUND state={state} changing={changingScene} scene={BrawlLevelCatalog.ActiveSceneName()}");
 
-            if (isServer)
+            if (NetworkServer.active)
             {
                 ServerOnNextRoundRequested();
                 return;
@@ -244,13 +824,61 @@ namespace Brawl
                 local.CmdRequestNextRound();
         }
 
-        [Server]
         public void ServerOnNextRoundRequested()
         {
-            if (state != EState.RoundEnd || nextRoundRequested || stoppingSession) return;
+            if (!NetworkServer.active || stoppingSession) return;
+            RecoverStuckSceneChange();
+            if (changingScene) return;
+            if (state != EState.RoundEnd && state != EState.FinalKpi)
+            {
+                Debug.LogWarning($"BrawlGameManager: 下一关被忽略，当前状态 {state}");
+                return;
+            }
+
             nextRoundRequested = true;
-            statusText = "已确认下一局，继续当前玩法";
+            statusText = HudHasNextLevel ? "已确认下一关" : "已确认查看总成绩";
             Debug.Log("BRAWL_SMOKE: NEXT_ROUND_REQUESTED");
+            ServerAdvanceAfterRound();
+        }
+
+        void ServerAdvanceAfterRound()
+        {
+            if (!NetworkServer.active) return;
+            RecoverStuckSceneChange();
+            if (changingScene)
+            {
+                Debug.LogWarning("BRAWL_SMOKE: ADVANCE blocked, still changingScene");
+                return;
+            }
+
+            string current = BrawlLevelCatalog.ActiveSceneIsLevel()
+                ? BrawlLevelCatalog.ActiveSceneName()
+                : BrawlLevelCatalog.NormalizeName(currentLevelName);
+            string next = BrawlLevelCatalog.GetNextLevel(current);
+            Debug.Log($"BRAWL_SMOKE: ADVANCE_AFTER_ROUND current={current} next={next}");
+            if (string.IsNullOrEmpty(next))
+            {
+                ServerEnterFinalKpi();
+                return;
+            }
+
+            ServerChangeToLevel(next);
+        }
+
+        [Server]
+        void ServerEnterFinalKpi()
+        {
+            state = EState.FinalKpi;
+            nextRoundRequested = false;
+            continueEndsAt = 0;
+            kpiBoardText = FormatKpiBoard();
+            foreach (var p in players)
+            {
+                if (p?.motor != null)
+                    p.motor.InputActive = false;
+            }
+            statusText = "2 关全部结束，这是整场 KPI 汇总";
+            Debug.Log("BRAWL_SMOKE: FINAL_KPI\n" + kpiBoardText);
         }
 
         float ResolveContinueSeconds()
@@ -263,24 +891,31 @@ namespace Brawl
         [Server]
         void ServerStopSession()
         {
-            ServerEnterWaiting(true);
+            ServerEnterRules(true);
         }
 
         [Server]
         void ServerStartRound()
         {
+            ServerRebuildPlayers();
             state = EState.Playing;
             waitingEndsAt = 0;
+            rulesEndsAt = 0;
+            continueEndsAt = 0;
+            airWallActive = false;
+            BrawlAirWall.SetAllActive(false);
             ServerSetAirWall(false);
-            roundEndsAt = NetworkTime.time + RoundDurationSeconds;
+            roundEndsAt = NetworkTime.time + Mathf.Max(5f, RoundDurationSeconds);
             nextScoreTime = NetworkTime.time + HoldScoreInterval;
             Debug.Log($"BRAWL_SMOKE: ROUND_STARTED players={players.Count} duration={RoundDurationSeconds}");
 
             ServerDropAllComputers();
+            Record.ResetCurrentRoundScores();
 
             int i = 0;
             foreach (var p in players)
             {
+                if (p?.motor == null) continue;
                 p.motor.Score = 0;
                 p.motor.InputActive = true;
                 if (p.motor is NetFAnnequinController fan)
@@ -349,7 +984,9 @@ namespace Brawl
                 p.motor.InputActive = false;
 
             ServerDropAllComputers();
+            ServerRecordLevelScores();
             rankText = RankLine();
+            kpiBoardText = FormatKpiBoard();
 
             string winner = players.Count == 0
                 ? "无人参赛"
@@ -404,6 +1041,15 @@ namespace Brawl
 
             int cap = Mathf.Max(1, HudScoreMax);
             motor.Score = Mathf.Min(cap, motor.Score + HoldScorePoints);
+            PlayerEntry entry = holder ?? FindPlayer(netId);
+            if (entry != null)
+            {
+                Record.SetCurrentRoundScore(
+                    entry.connectionId,
+                    entry.botIndex,
+                    BrawlHudNames.Label(motor.NetId, PlayersForHud()),
+                    motor.Score);
+            }
         }
 
         [Server]
@@ -421,7 +1067,7 @@ namespace Brawl
         [Server]
         void ServerRescueIfNeeded(PlayerEntry p)
         {
-            if (p?.motor == null || p.motor.Transform == null) return;
+            if (!IsLiveMotor(p?.motor) || p.motor.Transform == null) return;
             if (p.motor.Transform.position.y < KillY)
                 ServerRescue(p);
         }
@@ -451,7 +1097,7 @@ namespace Brawl
         [Server]
         void ServerContainInAirWall(PlayerEntry p)
         {
-            if (!airWallActive || p?.motor == null || p.motor.Transform == null) return;
+            if (!airWallActive || !IsLiveMotor(p?.motor) || p.motor.Transform == null) return;
 
             BrawlAirWall wall = BrawlAirWall.Ensure(this);
             if (wall == null) return;
@@ -463,10 +1109,11 @@ namespace Brawl
         [Server]
         void ServerSetAirWall(bool active)
         {
-            if (airWallActive == active) return;
+            bool changed = airWallActive != active;
             airWallActive = active;
             ApplyAirWall();
-            Debug.Log($"BRAWL_SMOKE: AIR_WALL {(active ? "ON" : "OFF")}");
+            if (changed)
+                Debug.Log($"BRAWL_SMOKE: AIR_WALL {(active ? "ON" : "OFF")}");
         }
 
         void OnAirWallActiveChanged(bool _, bool __)
@@ -476,14 +1123,44 @@ namespace Brawl
 
         void ApplyAirWall()
         {
-            BrawlAirWall wall = BrawlAirWall.Ensure(this);
-            if (wall == null)
-            {
-                Debug.LogWarning("BrawlGameManager: 场景里没有 AirWall，请在 MiniGame_01 放置空气墙实体");
-                return;
-            }
+            bool show = ShouldShowMatchAirWall();
+            BrawlAirWall.ClearStale();
+            BrawlAirWall wall = show ? BrawlAirWall.EnsureInLevel(this) : BrawlAirWall.Ensure(this);
+            if (wall != null)
+                wall.SetActiveWall(show);
+            BrawlAirWall.SetAllActive(show);
+        }
 
-            wall.SetActiveWall(airWallActive);
+        static bool IsLiveMotor(IBrawlPlayer motor)
+        {
+            return motor is Object obj && obj != null;
+        }
+
+        static bool IsDeadPlayer(PlayerEntry player)
+        {
+            return player == null || !IsLiveMotor(player.motor);
+        }
+
+        void PurgeDeadPlayers()
+        {
+            players.RemoveAll(IsDeadPlayer);
+        }
+
+        [Server]
+        void ServerRebuildPlayers()
+        {
+            PurgeDeadPlayers();
+            foreach (NetFAnnequinController fan in FindObjectsOfType<NetFAnnequinController>())
+            {
+                if (fan == null) continue;
+                if (players.Exists(p => p.motor == fan)) continue;
+
+                NetworkConnectionToClient conn = fan.connectionToClient;
+                if (conn != null)
+                    ServerOnPlayerJoined(conn);
+                else
+                    ServerOnBotJoined(fan);
+            }
         }
 
         [Server]
@@ -614,6 +1291,138 @@ namespace Brawl
         {
             int total = Mathf.CeilToInt(Mathf.Max(0f, seconds));
             return $"{total / 60:00}:{total % 60:00}";
+        }
+
+        void BindLevelRules()
+        {
+            string title = BrawlLevelCatalog.GetLevelTitle(currentLevelName);
+            BrawlLevelInfo info = BrawlLevelInfo.FindInScene();
+            rulesTitle = info != null && !string.IsNullOrEmpty(info.Title)
+                ? $"{title}  {info.Title}"
+                : $"{title}  本局规则";
+            rulesBody = info != null && !string.IsNullOrEmpty(info.Rules)
+                ? info.Rules
+                : DefaultRulesText();
+        }
+
+        static string DefaultRulesText()
+        {
+            return
+                "抱住笔记本电脑并坚持不放，就能持续得分。\n" +
+                "被拳头打中会丢掉电脑，自己也会被打飞。\n" +
+                "先到 99 分，或时间结束时按分数排名。\n" +
+                "掉出场地会送回出生点，不会淘汰。\n\n" +
+                "WASD 移动　　空格 跳跃　　Shift 加速\n" +
+                "左键 出拳　　按住右键 抱起电脑　　松开右键 放下\n" +
+                "Esc 释放鼠标　　Alt 重新捕获鼠标\n\n" +
+                "开局有空气墙，倒计时结束后撤墙，正式开打。";
+        }
+
+        static BrawlRunRecord Record => BrawlRunRecord.Ensure(BrawlSession.Instance != null ? BrawlSession.Instance.transform : null);
+
+        [Server]
+        void ServerRecordLevelScores()
+        {
+            var roster = PlayersForHud();
+            foreach (var p in players)
+            {
+                if (p?.motor == null) continue;
+                Record.SetCurrentRoundScore(
+                    p.connectionId,
+                    p.botIndex,
+                    BrawlHudNames.Label(p.motor.NetId, roster),
+                    p.motor.Score);
+            }
+
+            Record.CommitLevel(currentLevelName);
+        }
+
+        string FormatKpiBoard()
+        {
+            return Record.FormatBoard();
+        }
+
+        IEnumerable<IBrawlPlayer> PlayersForHud()
+        {
+            return players.Select(p => p.motor);
+        }
+
+        void RefreshLobbyReadyStatus()
+        {
+            BrawlLobbyReady.Tally tally = TallyLobbyReady();
+            lobbyReadyLine = tally.Line;
+            lobbyAllReady = tally.CanEnterFirstLevel(MinPlayersToStart);
+            statusText = $"{lobbyReadyLine}    全员准备后进入第一关";
+        }
+
+        BrawlLobbyReady.Tally TallyLobbyReady()
+        {
+            var tally = new BrawlLobbyReady.Tally();
+            foreach (var p in players)
+            {
+                bool ready = p?.motor is NetFAnnequinController fan && fan.LobbyReady;
+                tally.Add(p?.motor != null, !IsHumanPlayer(p), ready);
+            }
+
+            return tally;
+        }
+
+        void ClearAllLobbyReady()
+        {
+            lobbyAllReady = false;
+            lobbyReadyLine = "";
+            foreach (var p in players)
+            {
+                if (p?.motor is NetFAnnequinController fan)
+                    BrawlLobbyReady.Clear(fan);
+            }
+        }
+
+        int CountHumanPlayers()
+        {
+            int total = 0;
+            foreach (var p in players)
+            {
+                if (IsHumanPlayer(p))
+                    total++;
+            }
+
+            return total;
+        }
+
+        static bool IsHumanPlayer(PlayerEntry player)
+        {
+            return player?.motor != null && player.botIndex < 0;
+        }
+
+        int ExpectedHumanConnections()
+        {
+            int count = 0;
+            foreach (var pair in NetworkServer.connections)
+            {
+                if (pair.Value != null)
+                    count++;
+            }
+
+            return count;
+        }
+
+        bool AllHumansInScene()
+        {
+            int expected = ExpectedHumanConnections();
+            int present = CountHumanPlayers();
+            if (present < Mathf.Max(MinPlayersToStart, expected) || present <= 0)
+                return false;
+
+            foreach (var pair in NetworkServer.connections)
+            {
+                NetworkConnectionToClient conn = pair.Value;
+                if (conn == null) continue;
+                if (!conn.isReady || conn.identity == null)
+                    return false;
+            }
+
+            return true;
         }
     }
 }

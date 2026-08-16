@@ -20,14 +20,18 @@ namespace Brawl
 
         public int PendingBotCount { get; set; }
 
+        public static BrawlNetworkManager SingletonBrawl => NetworkManager.singleton as BrawlNetworkManager;
+
         int nextPlayerIndex;
         bool pendingBotsSpawned;
+        readonly System.Collections.Generic.Dictionary<int, int> connectionSlots = new System.Collections.Generic.Dictionary<int, int>();
 
         public override void Awake()
         {
             EnsurePlayerModels();
             ApplyFirstPrefabAsPlayerPrefab();
             RegisterPlayerModelPrefabs();
+            offlineScene = BrawlLevelCatalog.LauncherScene;
             base.Awake();
         }
 
@@ -35,10 +39,103 @@ namespace Brawl
         {
             nextPlayerIndex = 0;
             pendingBotsSpawned = false;
+            connectionSlots.Clear();
             EnsurePlayerModels();
             ApplyFirstPrefabAsPlayerPrefab();
             RegisterPlayerModelPrefabs();
             base.OnStartServer();
+            SpawnGameManagerIfNeeded();
+        }
+
+        public bool TryChangeLevel(string sceneName)
+        {
+            string name = BrawlLevelCatalog.NormalizeName(sceneName);
+            if (string.IsNullOrEmpty(name))
+            {
+                Debug.LogError("BrawlNetworkManager: 切关名为空");
+                return false;
+            }
+
+            int buildIndex = -1;
+            for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCountInBuildSettings; i++)
+            {
+                string path = UnityEngine.SceneManagement.SceneUtility.GetScenePathByBuildIndex(i);
+                if (BrawlLevelCatalog.NormalizeName(path) == name)
+                {
+                    buildIndex = i;
+                    break;
+                }
+            }
+
+            if (buildIndex < 0)
+            {
+                Debug.LogError("BrawlNetworkManager: Build Settings 里没有 " + name);
+                return false;
+            }
+
+            Debug.Log($"BRAWL_SMOKE: TRY_CHANGE_LEVEL {name} buildIndex={buildIndex}");
+            ServerChangeScene(name);
+            if (loadingSceneAsync == null)
+            {
+                Debug.LogWarning("BrawlNetworkManager: ServerChangeScene 没有启动加载，改用 buildIndex");
+                loadingSceneAsync = UnityEngine.SceneManagement.SceneManager.LoadSceneAsync(buildIndex);
+            }
+
+            if (loadingSceneAsync == null)
+            {
+                Debug.LogError("BrawlNetworkManager: LoadSceneAsync 失败 " + name);
+                return false;
+            }
+
+            Debug.Log($"BRAWL_SMOKE: LEVEL_LOAD_STARTED {name} progress={loadingSceneAsync.progress}");
+            return true;
+        }
+
+        public override void OnServerChangeScene(string newSceneName)
+        {
+            BrawlSession.AdoptAllPlayers();
+            if (BrawlBotBrain.AliveCount <= 0)
+                pendingBotsSpawned = false;
+            if (BrawlGameManager.Instance != null)
+                BrawlGameManager.Instance.ServerPrepareSceneChange();
+            base.OnServerChangeScene(newSceneName);
+        }
+
+        public override void OnClientChangeScene(string newSceneName, SceneOperation sceneOperation, bool customHandling)
+        {
+            BrawlSession.AdoptAllPlayers();
+            base.OnClientChangeScene(newSceneName, sceneOperation, customHandling);
+        }
+
+        public override void OnServerSceneChanged(string sceneName)
+        {
+            base.OnServerSceneChanged(sceneName);
+            ServerEnsureMatchActors();
+            if (BrawlGameManager.Instance != null)
+                BrawlGameManager.Instance.ServerOnSceneReady(sceneName);
+        }
+
+        public override void OnClientSceneChanged()
+        {
+            base.OnClientSceneChanged();
+            if (autoCreatePlayer && NetworkClient.active && NetworkClient.localPlayer == null)
+                NetworkClient.AddPlayer();
+        }
+
+        public void ServerEnsureMatchActors()
+        {
+            if (!NetworkServer.active) return;
+            BrawlSession.AdoptAllPlayers();
+
+            foreach (NetworkConnectionToClient conn in NetworkServer.connections.Values)
+            {
+                if (conn == null || !conn.isReady) continue;
+                if (conn.identity != null) continue;
+                OnServerAddPlayer(conn);
+            }
+
+            if (BrawlBotBrain.AliveCount > 0)
+                pendingBotsSpawned = true;
         }
 
         public override void OnStartClient()
@@ -162,6 +259,26 @@ namespace Brawl
             return HasSpawnableAssetId(playerPrefab) ? playerPrefab : null;
         }
 
+        int ResolveConnectionSlot(NetworkConnectionToClient conn)
+        {
+            if (conn != null && connectionSlots.TryGetValue(conn.connectionId, out int slot))
+                return slot;
+
+            int assigned = nextPlayerIndex++;
+            if (conn != null)
+                connectionSlots[conn.connectionId] = assigned;
+            return assigned;
+        }
+
+        void SpawnGameManagerIfNeeded()
+        {
+            BrawlGameManager gm = BrawlGameManager.Instance;
+            if (gm == null) return;
+            if (gm.netId != 0) return;
+            if (gm.netIdentity == null || gm.netIdentity.assetId == 0) return;
+            NetworkServer.Spawn(gm.gameObject);
+        }
+
         bool CanSpawnForClients(GameObject prefab)
         {
             if (prefab == null) return false;
@@ -171,10 +288,18 @@ namespace Brawl
 
         public override void OnServerAddPlayer(NetworkConnectionToClient conn)
         {
+            if (conn != null && conn.identity != null)
+            {
+                BrawlSession.AdoptActor(conn.identity.gameObject);
+                if (BrawlGameManager.Instance != null)
+                    BrawlGameManager.Instance.ServerOnPlayerJoined(conn);
+                return;
+            }
+
             EnsurePlayerModels();
             ApplyFirstPrefabAsPlayerPrefab();
 
-            int playerIndex = nextPlayerIndex++;
+            int playerIndex = ResolveConnectionSlot(conn);
             GameObject prefab = ResolvePlayerPrefab(playerIndex);
             if (prefab == null)
                 prefab = playerPrefab;
@@ -190,6 +315,7 @@ namespace Brawl
                 : Instantiate(prefab);
 
             player.name = $"{prefab.name} [player={playerIndex} conn={conn.connectionId}]";
+            BrawlSession.AdoptActor(player);
             NetworkServer.AddPlayerForConnection(conn, player);
 
             Debug.Log($"BRAWL: 第{playerIndex + 1}个玩家 -> {prefab.name}");
@@ -275,6 +401,7 @@ namespace Brawl
             var mouse = bot.GetComponent<FAnnequinMouseActions>();
             if (mouse != null) mouse.enabled = false;
 
+            BrawlSession.AdoptActor(bot);
             NetworkServer.Spawn(bot);
 
             var fan = bot.GetComponent<NetFAnnequinController>();

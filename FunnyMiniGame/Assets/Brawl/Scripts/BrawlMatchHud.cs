@@ -42,6 +42,16 @@ namespace Brawl
         public Text CursorHintText;
         public Button NextRoundButton;
         public Text NextRoundLabel;
+        public Button LobbyButton;
+        public Text LobbyLabel;
+        public Button LobbyStartButton;
+        public Text LobbyStartLabel;
+        public GameObject RulesRoot;
+        public Text RulesTitle;
+        public Text RulesBody;
+        public Text RulesCountdown;
+        public Button DebugTimerButton;
+        public Text DebugTimerLabel;
 
         [Header("Colors")]
         public Color IdleFrameColor = new Color(0.08f, 0.08f, 0.08f, 0.72f);
@@ -69,6 +79,8 @@ namespace Brawl
         Color timerFillBase;
         float displayedTurbo = 1f;
         bool hasDisplayedTurbo;
+        string lastHudScene;
+        int lastMatchSeq = -1;
 
         void Awake()
         {
@@ -76,6 +88,9 @@ namespace Brawl
             EnsureTurboVisuals();
             EnsureCursorHint();
             EnsureNextRoundButton();
+            EnsureLobbyButton();
+            EnsureRulesPanel();
+            EnsureDebugTimerButton();
             ApplyCjkFont();
             CacheTimerVisuals();
             EnsureBeepSource();
@@ -85,13 +100,85 @@ namespace Brawl
 
         void LateUpdate()
         {
-            if (!NetworkClient.active && !NetworkServer.active) return;
+            BrawlMatchHud keep = SessionHud();
+            if (keep != null && keep != this)
+            {
+                gameObject.SetActive(false);
+                return;
+            }
+
+            bool online = NetworkClient.active || NetworkServer.active;
+            BrawlGameManager gm = BrawlGameManager.Instance;
+            bool showRules = online && gm != null && gm.HudIsShowingRules;
+            if (ControlsText != null)
+                ControlsText.gameObject.SetActive(online && !showRules);
+            if (!online) return;
+            ResetHudIfSceneChanged();
             Refresh();
 
-            BrawlGameManager gm = BrawlGameManager.Instance;
+            if (gm != null && gm.HudShowLobbyActions
+                && (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter)))
+                gm.RequestLobbyReadyToggle();
+
             if (gm != null && gm.HudIsRoundEnd && !gm.HudContinueRequested
                 && (Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter) || Input.GetKeyDown(KeyCode.N)))
                 gm.RequestNextRound();
+
+            if (gm != null && gm.HudIsPlaying && Input.GetKeyDown(KeyCode.F9))
+                gm.DebugSetRemainingSeconds(10f);
+        }
+
+        void ResetHudIfSceneChanged()
+        {
+            string scene = BrawlLevelCatalog.ActiveSceneName();
+            BrawlGameManager gm = BrawlGameManager.Instance;
+            int seq = gm != null ? gm.HudMatchSeq : 0;
+            if (scene == lastHudScene && seq == lastMatchSeq) return;
+            lastHudScene = scene;
+            lastMatchSeq = seq;
+            lastBeepSecond = -1;
+            hasDisplayedTurbo = false;
+            if (RankingRoot != null)
+                RankingRoot.SetActive(false);
+            if (NextRoundButton != null)
+                NextRoundButton.gameObject.SetActive(false);
+            if (LobbyButton != null)
+                LobbyButton.gameObject.SetActive(false);
+            if (LobbyStartButton != null)
+                LobbyStartButton.gameObject.SetActive(false);
+            if (RulesRoot != null)
+                RulesRoot.SetActive(false);
+            HideForeignMatchHuds();
+        }
+
+        void HideForeignMatchHuds()
+        {
+            BrawlMatchHud keep = SessionHud();
+            BrawlMatchHud[] huds = FindObjectsOfType<BrawlMatchHud>(true);
+            for (int i = 0; i < huds.Length; i++)
+            {
+                if (huds[i] == null) continue;
+                if (huds[i] == keep)
+                {
+                    if (!huds[i].gameObject.activeSelf)
+                        huds[i].gameObject.SetActive(true);
+                    continue;
+                }
+
+                huds[i].gameObject.SetActive(false);
+            }
+        }
+
+        static BrawlMatchHud SessionHud()
+        {
+            if (BrawlSession.Instance != null)
+            {
+                BrawlMatchHud sessionHud = BrawlSession.Instance.GetComponentInChildren<BrawlMatchHud>(true);
+                if (sessionHud != null)
+                    return sessionHud;
+            }
+
+            return FindObjectOfType<BrawlMatchHud>();
         }
 
         void Refresh()
@@ -104,16 +191,26 @@ namespace Brawl
             if (TimerText != null)
                 TimerText.text = FormatTime(remaining);
 
-            ApplyTimerWarning(gm != null && (gm.HudIsPlaying || gm.HudIsWaiting || gm.HudIsRoundEnd), remaining);
+            ApplyTimerWarning(gm != null && (gm.HudIsPlaying || (gm.HudIsWaiting && remaining > 0f) || gm.HudIsRoundEnd), remaining);
 
             if (StatusText != null)
             {
-                if (gm != null && gm.HudIsWaiting)
-                    StatusText.text = $"空气墙倒计时 {FormatTime(remaining)} 后消失";
+                if (gm != null && gm.HudIsLobby)
+                    StatusText.text = string.IsNullOrEmpty(gm.HudStatusText)
+                        ? "大厅等待加入，全员准备后进入第一关"
+                        : TrimStatus(gm.HudStatusText);
+                else if (gm != null && gm.HudIsShowingRules)
+                    StatusText.text = $"请阅读{gm.HudRulesTitle}，{Mathf.CeilToInt(remaining)} 秒后开始";
+                else if (gm != null && gm.HudIsWaiting)
+                    StatusText.text = string.IsNullOrEmpty(gm.HudStatusText)
+                        ? $"空气墙倒计时 {FormatTime(remaining)} 后正式开始"
+                        : TrimStatus(gm.HudStatusText);
+                else if (gm != null && gm.HudIsFinalKpi)
+                    StatusText.text = "2 关全部结束，这是整场 KPI 汇总";
                 else if (gm != null && gm.HudIsRoundEnd)
                     StatusText.text = gm.HudContinueRequested
-                        ? "已确认下一局，继续当前玩法"
-                        : $"点击「下一局」或按 Enter 继续，否则 {FormatTime(remaining)} 后回到等待";
+                        ? (gm.HudHasNextLevel ? "已确认下一关" : "已确认查看总成绩")
+                        : $"点击「{(gm.HudHasNextLevel ? "下一关" : "查看总成绩")}」或按 Enter 继续，否则 {FormatTime(remaining)} 后自动继续";
                 else
                     StatusText.text = TrimStatus(gm != null ? gm.HudStatusText : "");
             }
@@ -125,7 +222,12 @@ namespace Brawl
             BindLocalTurbo();
             BindRanking(gm);
             BindNextRoundButton(gm);
+            BindLobbyButton(gm);
+            BindRulesPanel(gm);
+            BindDebugTimerButton(gm);
             BindCursorHint();
+            if (NextRoundButton != null && NextRoundButton.gameObject.activeSelf)
+                NextRoundButton.transform.SetAsLastSibling();
         }
 
         void BindSlot(PlayerSlot slot, int index, IBrawlPlayer player, int scoreMax)
@@ -296,21 +398,95 @@ namespace Brawl
 
         void BindNextRoundButton(BrawlGameManager gm)
         {
-            bool show = gm != null && gm.HudIsRoundEnd;
+            bool show = gm != null && gm.HudIsRoundEnd && !gm.HudIsFinalKpi;
             if (NextRoundButton != null)
                 NextRoundButton.gameObject.SetActive(show);
             if (!show || NextRoundLabel == null) return;
 
-            bool requested = gm.HudContinueRequested;
-            NextRoundButton.interactable = !requested;
+            NextRoundButton.interactable = true;
+            if (NextRoundButton.transform is RectTransform nextRect)
+                nextRect.anchoredPosition = new Vector2(0f, -240f);
             NextRoundButton.transform.SetAsLastSibling();
-            NextRoundLabel.text = requested ? "已确认" : "下一局";
+            NextRoundLabel.text = gm.HudHasNextLevel ? "下一关" : "查看总成绩";
         }
 
         void OnNextRoundClicked()
         {
+            Debug.Log("BRAWL_SMOKE: NEXT_ROUND_BUTTON_CLICKED");
             if (BrawlGameManager.Instance != null)
                 BrawlGameManager.Instance.RequestNextRound();
+        }
+
+        void BindDebugTimerButton(BrawlGameManager gm)
+        {
+            bool show = gm != null && gm.HudIsPlaying;
+            if (DebugTimerButton != null)
+                DebugTimerButton.gameObject.SetActive(show);
+            if (!show) return;
+            DebugTimerButton.transform.SetAsLastSibling();
+        }
+
+        void OnDebugTimerClicked()
+        {
+            if (BrawlGameManager.Instance != null)
+                BrawlGameManager.Instance.DebugSetRemainingSeconds(10f);
+        }
+
+        void EnsureDebugTimerButton()
+        {
+            if (DebugTimerButton != null && DebugTimerLabel != null) return;
+
+            Transform existing = transform.Find("DebugTimer");
+            if (existing != null)
+            {
+                DebugTimerButton = existing.GetComponent<Button>();
+                DebugTimerLabel = existing.Find("Label")?.GetComponent<Text>();
+                if (DebugTimerButton != null && DebugTimerLabel != null)
+                {
+                    DebugTimerButton.onClick.RemoveListener(OnDebugTimerClicked);
+                    DebugTimerButton.onClick.AddListener(OnDebugTimerClicked);
+                    DebugTimerButton.gameObject.SetActive(false);
+                    return;
+                }
+            }
+
+            Font fallbackFont = TimerText != null && TimerText.font != null
+                ? TimerText.font
+                : Resources.GetBuiltinResource<Font>("Arial.ttf");
+
+            GameObject buttonObject = new GameObject("DebugTimer", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+            RectTransform buttonRect = buttonObject.GetComponent<RectTransform>();
+            buttonRect.SetParent(transform, false);
+            buttonRect.anchorMin = new Vector2(1f, 1f);
+            buttonRect.anchorMax = new Vector2(1f, 1f);
+            buttonRect.pivot = new Vector2(1f, 1f);
+            buttonRect.anchoredPosition = new Vector2(-24f, -24f);
+            buttonRect.sizeDelta = new Vector2(168f, 40f);
+            Image image = buttonObject.GetComponent<Image>();
+            image.color = new Color(0.72f, 0.28f, 0.12f, 0.92f);
+            image.raycastTarget = true;
+            DebugTimerButton = buttonObject.GetComponent<Button>();
+            DebugTimerButton.onClick.AddListener(OnDebugTimerClicked);
+
+            GameObject labelObject = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+            RectTransform labelRect = labelObject.GetComponent<RectTransform>();
+            labelRect.SetParent(buttonRect, false);
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+            DebugTimerLabel = labelObject.GetComponent<Text>();
+            DebugTimerLabel.font = fallbackFont;
+            DebugTimerLabel.fontSize = 16;
+            DebugTimerLabel.fontStyle = FontStyle.Bold;
+            DebugTimerLabel.alignment = TextAnchor.MiddleCenter;
+            DebugTimerLabel.color = Color.white;
+            DebugTimerLabel.raycastTarget = false;
+            DebugTimerLabel.text = "当局剩10秒";
+            Outline outline = labelObject.AddComponent<Outline>();
+            outline.effectColor = new Color(0f, 0f, 0f, 0.7f);
+            outline.effectDistance = new Vector2(1f, -1f);
+            buttonObject.SetActive(false);
         }
 
         void EnsureNextRoundButton()
@@ -341,8 +517,8 @@ namespace Brawl
             buttonRect.anchorMin = new Vector2(0.5f, 0.5f);
             buttonRect.anchorMax = new Vector2(0.5f, 0.5f);
             buttonRect.pivot = new Vector2(0.5f, 0.5f);
-            buttonRect.anchoredPosition = new Vector2(0f, -150f);
-            buttonRect.sizeDelta = new Vector2(220f, 56f);
+            buttonRect.anchoredPosition = new Vector2(0f, -240f);
+            buttonRect.sizeDelta = new Vector2(240f, 56f);
             Image image = buttonObject.GetComponent<Image>();
             image.color = new Color(0.16f, 0.72f, 0.38f, 0.96f);
             image.raycastTarget = true;
@@ -368,6 +544,311 @@ namespace Brawl
             outline.effectColor = new Color(0f, 0f, 0f, 0.7f);
             outline.effectDistance = new Vector2(1f, -1f);
             buttonObject.SetActive(false);
+        }
+
+        void BindLobbyButton(BrawlGameManager gm)
+        {
+            bool show = gm != null && gm.HudShowLobbyActions && BrawlLevelCatalog.ActiveSceneIsLauncher();
+            SetLobbyButtonActive(LobbyButton, show);
+            SetLobbyButtonActive(LobbyStartButton, show);
+            HideLooseLobbyButtons(show);
+            if (!show) return;
+
+            bool ready = gm.HudLocalIsReady();
+            if (LobbyLabel != null)
+                LobbyLabel.text = ready ? "取消准备" : "准备 Ready";
+            Image readyImage = LobbyButton != null ? LobbyButton.GetComponent<Image>() : null;
+            if (readyImage != null)
+                readyImage.color = ready
+                    ? new Color(0.42f, 0.46f, 0.5f, 0.96f)
+                    : new Color(0.18f, 0.55f, 0.92f, 0.96f);
+            if (LobbyButton != null)
+            {
+                LobbyButton.interactable = true;
+                LobbyButton.transform.SetAsLastSibling();
+            }
+
+            bool allReady = gm.HudLobbyAllReady;
+            if (LobbyStartLabel != null)
+                LobbyStartLabel.text = allReady ? "开始游戏" : "等待全员准备";
+            Image startImage = LobbyStartButton != null ? LobbyStartButton.GetComponent<Image>() : null;
+            if (startImage != null)
+                startImage.color = allReady
+                    ? new Color(0.16f, 0.72f, 0.38f, 0.96f)
+                    : new Color(0.35f, 0.38f, 0.42f, 0.88f);
+            if (LobbyStartButton != null)
+            {
+                LobbyStartButton.interactable = true;
+                LobbyStartButton.transform.SetAsLastSibling();
+            }
+        }
+
+        static void SetLobbyButtonActive(Button button, bool show)
+        {
+            if (button != null)
+                button.gameObject.SetActive(show);
+        }
+
+        void HideLooseLobbyButtons(bool show)
+        {
+            HideNamedChild("LobbyAction", show ? LobbyButton : null);
+            HideNamedChild("LobbyStart", show ? LobbyStartButton : null);
+        }
+
+        void HideNamedChild(string name, Button keep)
+        {
+            Transform[] children = GetComponentsInChildren<Transform>(true);
+            for (int i = 0; i < children.Length; i++)
+            {
+                Transform child = children[i];
+                if (child == null || child.name != name) continue;
+                if (keep != null && child == keep.transform) continue;
+                child.gameObject.SetActive(false);
+            }
+        }
+
+        void OnLobbyReadyClicked()
+        {
+            if (BrawlGameManager.Instance != null)
+                BrawlGameManager.Instance.RequestLobbyReadyToggle();
+        }
+
+        void OnLobbyStartClicked()
+        {
+            if (BrawlGameManager.Instance != null)
+                BrawlGameManager.Instance.RequestLobbyStart();
+        }
+
+        void EnsureLobbyButton()
+        {
+            Font fallbackFont = TimerText != null && TimerText.font != null
+                ? TimerText.font
+                : Resources.GetBuiltinResource<Font>("Arial.ttf");
+
+            if (LobbyButton == null || LobbyLabel == null)
+            {
+                BindOrCreateLobbyButton(
+                    "LobbyAction",
+                    new Vector2(-130f, -150f),
+                    new Color(0.18f, 0.55f, 0.92f, 0.96f),
+                    "准备 Ready",
+                    OnLobbyReadyClicked,
+                    fallbackFont,
+                    out LobbyButton,
+                    out LobbyLabel);
+            }
+
+            if (LobbyStartButton == null || LobbyStartLabel == null)
+            {
+                BindOrCreateLobbyButton(
+                    "LobbyStart",
+                    new Vector2(130f, -150f),
+                    new Color(0.16f, 0.72f, 0.38f, 0.96f),
+                    "开始游戏",
+                    OnLobbyStartClicked,
+                    fallbackFont,
+                    out LobbyStartButton,
+                    out LobbyStartLabel);
+            }
+        }
+
+        void BindOrCreateLobbyButton(
+            string name,
+            Vector2 position,
+            Color color,
+            string text,
+            UnityEngine.Events.UnityAction onClick,
+            Font font,
+            out Button button,
+            out Text label)
+        {
+            button = null;
+            label = null;
+            Transform existing = transform.Find(name);
+            if (existing != null)
+            {
+                button = existing.GetComponent<Button>();
+                label = existing.Find("Label")?.GetComponent<Text>();
+                if (button != null && label != null)
+                {
+                    button.onClick.RemoveListener(onClick);
+                    button.onClick.AddListener(onClick);
+                    button.gameObject.SetActive(false);
+                    return;
+                }
+            }
+
+            GameObject buttonObject = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+            RectTransform buttonRect = buttonObject.GetComponent<RectTransform>();
+            buttonRect.SetParent(transform, false);
+            buttonRect.anchorMin = new Vector2(0.5f, 0.5f);
+            buttonRect.anchorMax = new Vector2(0.5f, 0.5f);
+            buttonRect.pivot = new Vector2(0.5f, 0.5f);
+            buttonRect.anchoredPosition = position;
+            buttonRect.sizeDelta = new Vector2(220f, 56f);
+            Image image = buttonObject.GetComponent<Image>();
+            image.color = color;
+            image.raycastTarget = true;
+            button = buttonObject.GetComponent<Button>();
+            button.onClick.AddListener(onClick);
+
+            GameObject labelObject = new GameObject("Label", typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+            RectTransform labelRect = labelObject.GetComponent<RectTransform>();
+            labelRect.SetParent(buttonRect, false);
+            labelRect.anchorMin = Vector2.zero;
+            labelRect.anchorMax = Vector2.one;
+            labelRect.offsetMin = Vector2.zero;
+            labelRect.offsetMax = Vector2.zero;
+            label = labelObject.GetComponent<Text>();
+            label.font = font;
+            label.fontSize = 24;
+            label.fontStyle = FontStyle.Bold;
+            label.alignment = TextAnchor.MiddleCenter;
+            label.color = Color.white;
+            label.raycastTarget = false;
+            label.text = text;
+            Outline outline = labelObject.AddComponent<Outline>();
+            outline.effectColor = new Color(0f, 0f, 0f, 0.7f);
+            outline.effectDistance = new Vector2(1f, -1f);
+            buttonObject.SetActive(false);
+        }
+
+        void BindRulesPanel(BrawlGameManager gm)
+        {
+            bool show = gm != null && gm.HudIsShowingRules;
+            if (RulesRoot != null)
+                RulesRoot.SetActive(show);
+            if (!show) return;
+
+            if (RulesRoot != null)
+                RulesRoot.transform.SetAsLastSibling();
+
+            if (RulesTitle != null)
+                RulesTitle.text = gm.HudRulesTitle;
+            if (RulesBody != null && !string.IsNullOrEmpty(gm.HudRulesBody))
+                RulesBody.text = gm.HudRulesBody;
+
+            int seconds = Mathf.Max(1, Mathf.CeilToInt(gm.HudRemainingSeconds));
+            if (RulesCountdown != null)
+            {
+                RulesCountdown.text = $"{seconds} 秒后进入空气墙等待区";
+                float pulse = Mathf.PingPong(Time.unscaledTime * 3.2f, 1f);
+                RulesCountdown.color = Color.Lerp(new Color(1f, 0.84f, 0.28f, 1f), Color.white, pulse);
+            }
+        }
+
+        void EnsureRulesPanel()
+        {
+            if (RulesRoot != null && RulesBody != null && RulesCountdown != null)
+            {
+                RulesRoot.SetActive(false);
+                return;
+            }
+
+            Transform existing = transform.Find("Rules");
+            if (existing != null)
+            {
+                RulesRoot = existing.gameObject;
+                RulesTitle = existing.Find("Card/Title")?.GetComponent<Text>();
+                RulesBody = existing.Find("Card/Body")?.GetComponent<Text>();
+                RulesCountdown = existing.Find("Card/Countdown")?.GetComponent<Text>();
+                if (RulesRoot != null && RulesBody != null && RulesCountdown != null)
+                {
+                    RulesRoot.SetActive(false);
+                    return;
+                }
+            }
+
+            Font fallbackFont = TimerText != null && TimerText.font != null
+                ? TimerText.font
+                : Resources.GetBuiltinResource<Font>("Arial.ttf");
+
+            GameObject root = new GameObject("Rules", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            RectTransform rootRect = root.GetComponent<RectTransform>();
+            rootRect.SetParent(transform, false);
+            rootRect.anchorMin = Vector2.zero;
+            rootRect.anchorMax = Vector2.one;
+            rootRect.offsetMin = Vector2.zero;
+            rootRect.offsetMax = Vector2.zero;
+            Image dim = root.GetComponent<Image>();
+            dim.color = new Color(0f, 0f, 0f, 0.58f);
+            dim.raycastTarget = false;
+            RulesRoot = root;
+
+            GameObject card = new GameObject("Card", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            RectTransform cardRect = card.GetComponent<RectTransform>();
+            cardRect.SetParent(rootRect, false);
+            cardRect.anchorMin = new Vector2(0.5f, 0.5f);
+            cardRect.anchorMax = new Vector2(0.5f, 0.5f);
+            cardRect.pivot = new Vector2(0.5f, 0.5f);
+            cardRect.anchoredPosition = Vector2.zero;
+            cardRect.sizeDelta = new Vector2(640f, 430f);
+            Image cardImage = card.GetComponent<Image>();
+            cardImage.color = new Color(0.05f, 0.06f, 0.08f, 0.94f);
+            cardImage.raycastTarget = false;
+
+            GameObject accent = new GameObject("Accent", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            RectTransform accentRect = accent.GetComponent<RectTransform>();
+            accentRect.SetParent(cardRect, false);
+            accentRect.anchorMin = new Vector2(0f, 1f);
+            accentRect.anchorMax = new Vector2(1f, 1f);
+            accentRect.pivot = new Vector2(0.5f, 1f);
+            accentRect.anchoredPosition = Vector2.zero;
+            accentRect.sizeDelta = new Vector2(0f, 5f);
+            accent.GetComponent<Image>().color = new Color(1f, 0.84f, 0.28f, 1f);
+            accent.GetComponent<Image>().raycastTarget = false;
+
+            RulesTitle = CreatePlainText(cardRect, "Title", fallbackFont, 30, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            SetHudRect(RulesTitle.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -22f), new Vector2(560f, 40f));
+            RulesTitle.text = "本局规则";
+
+            RulesBody = CreatePlainText(cardRect, "Body", fallbackFont, 20, FontStyle.Normal, TextAnchor.UpperLeft, new Color(0.92f, 0.93f, 0.95f, 0.96f));
+            SetHudRect(RulesBody.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -72f), new Vector2(560f, 270f));
+            RulesBody.horizontalOverflow = HorizontalWrapMode.Wrap;
+            RulesBody.verticalOverflow = VerticalWrapMode.Overflow;
+            RulesBody.lineSpacing = 1.12f;
+            RulesBody.text =
+                "抱住笔记本电脑并坚持不放，就能持续得分。\n" +
+                "被拳头打中会丢掉电脑，自己也会被打飞。\n" +
+                "先到 99 分，或时间结束时按分数排名。\n" +
+                "掉出场地会送回出生点，不会淘汰。\n\n" +
+                "WASD 移动　　空格 跳跃　　Shift 加速\n" +
+                "左键 出拳　　按住右键 抱起电脑　　松开右键 放下\n" +
+                "Esc 释放鼠标　　Alt 重新捕获鼠标\n\n" +
+                "开局有空气墙，倒计时结束后撤墙，正式开打。";
+
+            RulesCountdown = CreatePlainText(cardRect, "Countdown", fallbackFont, 22, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(1f, 0.84f, 0.28f, 1f));
+            SetHudRect(RulesCountdown.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 22f), new Vector2(560f, 36f));
+            RulesCountdown.text = "6 秒后自动开始";
+
+            root.SetActive(false);
+        }
+
+        static Text CreatePlainText(Transform parent, string name, Font font, int size, FontStyle style, TextAnchor align, Color color)
+        {
+            GameObject go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+            RectTransform rect = go.GetComponent<RectTransform>();
+            rect.SetParent(parent, false);
+            Text text = go.GetComponent<Text>();
+            text.font = font;
+            text.fontSize = size;
+            text.fontStyle = style;
+            text.alignment = align;
+            text.color = color;
+            text.raycastTarget = false;
+            Outline outline = go.AddComponent<Outline>();
+            outline.effectColor = new Color(0f, 0f, 0f, 0.7f);
+            outline.effectDistance = new Vector2(1f, -1f);
+            return text;
+        }
+
+        static void SetHudRect(RectTransform rect, Vector2 anchorMin, Vector2 anchorMax, Vector2 pivot, Vector2 pos, Vector2 size)
+        {
+            rect.anchorMin = anchorMin;
+            rect.anchorMax = anchorMax;
+            rect.pivot = pivot;
+            rect.anchoredPosition = pos;
+            rect.sizeDelta = size;
         }
 
         void BindCursorHint()
@@ -396,8 +877,10 @@ namespace Brawl
             {
                 ControlsText.text = controlsHint;
                 RectTransform controlsRect = ControlsText.rectTransform;
+                controlsRect.anchoredPosition = new Vector2(24f, 140f);
                 if (controlsRect.sizeDelta.y < 196f)
                     controlsRect.sizeDelta = new Vector2(Mathf.Max(460f, controlsRect.sizeDelta.x), 196f);
+                ControlsText.gameObject.SetActive(false);
             }
 
             if (CursorHintText == null)
@@ -451,9 +934,29 @@ namespace Brawl
 
         void BindRanking(BrawlGameManager gm)
         {
-            bool show = gm != null && gm.HudIsRoundEnd;
-            if (RankingRoot != null) RankingRoot.SetActive(show);
+            bool showRound = gm != null && gm.HudIsRoundEnd;
+            bool showFinal = gm != null && gm.HudIsFinalKpi;
+            bool show = showRound || showFinal;
+            if (RankingRoot != null)
+            {
+                RankingRoot.SetActive(show);
+                foreach (Graphic graphic in RankingRoot.GetComponentsInChildren<Graphic>(true))
+                {
+                    if (graphic != null)
+                        graphic.raycastTarget = false;
+                }
+            }
             if (!show || RankingBody == null) return;
+
+            Text title = RankingRoot != null ? RankingRoot.transform.Find("Title")?.GetComponent<Text>() : null;
+            if (title != null)
+                title.text = showFinal ? "整场 KPI 汇总" : "本局排名";
+
+            if (showFinal)
+            {
+                RankingBody.text = string.IsNullOrEmpty(gm.HudKpiBoardText) ? "还没有成绩" : gm.HudKpiBoardText;
+                return;
+            }
 
             var ordered = new List<IBrawlPlayer>(hudPlayers);
             ordered.Sort((a, b) =>

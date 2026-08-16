@@ -75,12 +75,13 @@ namespace Brawl
         [SyncVar(hook = nameof(OnSyncSpeed))] float syncSpeed;
         [SyncVar(hook = nameof(OnSyncHoldingComputer))] bool syncHoldingComputer;
         [SyncVar] float syncTurboRemaining = 5f;
+        [SyncVar] public bool LobbyReady;
 
         public bool InputActive { get; set; } = true;
         public Vector3 SpawnPosition { get; set; }
 
         public uint NetId => netId;
-        public Transform Transform => transform;
+        public Transform Transform => this != null ? transform : null;
         public PlayerAttributes Attributes => attributes;
         public bool IsDead => false;
         public bool WantsToMove => pendingMove.sqrMagnitude > 0.0001f;
@@ -209,6 +210,7 @@ namespace Brawl
 
         public override void OnStartServer()
         {
+            BrawlSession.AdoptActor(gameObject);
             SpawnPosition = transform.position;
             ResetServerJumpState();
             ServerResetTurbo();
@@ -234,6 +236,7 @@ namespace Brawl
 
         public override void OnStartClient()
         {
+            BrawlSession.AdoptActor(gameObject);
             DisableLocalDemoInput();
             ConfigureNetworkSync();
 
@@ -726,6 +729,28 @@ namespace Brawl
         {
             if (BrawlGameManager.Instance != null)
                 BrawlGameManager.Instance.ServerOnNextRoundRequested();
+        }
+
+        [Command]
+        public void CmdSetLobbyReady(bool ready)
+        {
+            if (BrawlGameManager.Instance == null || !BrawlGameManager.Instance.HudIsLobby)
+                return;
+            LobbyReady = ready;
+        }
+
+        [Command]
+        public void CmdRequestLobbyStart()
+        {
+            if (BrawlGameManager.Instance != null)
+                BrawlGameManager.Instance.ServerTryStartFromLobby();
+        }
+
+        [Command]
+        public void CmdDebugSetRemainingSeconds(float seconds)
+        {
+            if (BrawlGameManager.Instance != null)
+                BrawlGameManager.Instance.ServerDebugSetRemainingSeconds(seconds);
         }
 
         [Command]

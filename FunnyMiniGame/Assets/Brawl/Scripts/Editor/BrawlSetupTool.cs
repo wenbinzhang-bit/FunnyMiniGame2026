@@ -62,7 +62,7 @@ namespace Brawl.EditorTools
             GameObject playerPrefab = BuildNetClaymanPrefab();
             GameObject capsulePrefab = BuildCapsulePrefab();
             GameObject networkPrefab = BuildNetworkPrefab(playerPrefab, capsulePrefab);
-            BuildArenaScene(networkPrefab);
+            BuildArenaScene();
 
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
@@ -164,8 +164,9 @@ namespace Brawl.EditorTools
             manager.networkAddress = "localhost";
             manager.playerSpawnMethod = PlayerSpawnMethod.RoundRobin;
 
+            manager.dontDestroyOnLoad = false;
             go.AddComponent<NetworkManagerHUD>();
-            go.AddComponent<BrawlNetworkHudAnchor>();
+            go.AddComponent<MiniGameNetworkHook>();
 
             GameObject saved = PrefabUtility.SaveAsPrefabAsset(go, NetworkPrefabPath);
             Object.DestroyImmediate(go);
@@ -173,7 +174,7 @@ namespace Brawl.EditorTools
             return saved;
         }
 
-        static void BuildArenaScene(GameObject networkPrefab)
+        static void BuildArenaScene()
         {
             Scene scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
 
@@ -210,26 +211,8 @@ namespace Brawl.EditorTools
             CreateSpawnPoint("Spawn_3", new Vector3(-6f, 1.5f, 6f));
             CreateSpawnPoint("Spawn_4", new Vector3(6f, 1.5f, -6f));
 
-            // 对局管理器(场景网络对象)
-            GameObject gm = new GameObject("GameManager");
-            gm.AddComponent<NetworkIdentity>();
-            var brawlGm = gm.AddComponent<BrawlGameManager>();
-            brawlGm.SpectatorIsland = new Vector3(60f, 3f, 60f);
-            brawlGm.RoundDurationSeconds = 60f;
-            brawlGm.HoldScoreInterval = 0.5f;
-            brawlGm.HoldScorePoints = 1;
-            brawlGm.RoundRestartDelay = 30f;
-            brawlGm.ContinueDecisionSeconds = 30f;
-            brawlGm.WaitingDurationSeconds = 30f;
-            Canvas arenaCanvas = Object.FindObjectOfType<Canvas>();
-            if (arenaCanvas != null && arenaCanvas.GetComponentInChildren<BrawlMatchHud>(true) == null)
-                BrawlHudSetup.BuildUnderCanvas(arenaCanvas);
-
-            // 全局物理设置
-            new GameObject("Bootstrap").AddComponent<BrawlBootstrap>();
-
-            // 网络管理器实例
-            PrefabUtility.InstantiatePrefab(networkPrefab);
+            if (Object.FindObjectOfType<BrawlSession>() == null)
+                BrawlSessionSetup.PackActiveScene();
 
             EditorSceneManager.SaveScene(scene, ArenaScenePath);
 
@@ -491,39 +474,8 @@ namespace Brawl.EditorTools
 
         static void EnsureNetworkObjects(Scene scene)
         {
-            GameObject networkPrefab = AssetDatabase.LoadAssetAtPath<GameObject>(NetworkPrefabPath);
-            if (networkPrefab == null)
-                throw new System.Exception($"BRAWL_SETUP: Network prefab missing at {NetworkPrefabPath}");
-
-            if (Object.FindObjectOfType<BrawlNetworkManager>() == null)
-                PrefabUtility.InstantiatePrefab(networkPrefab, scene);
-
-            if (Object.FindObjectOfType<BrawlBootstrap>() == null)
-            {
-                GameObject bootstrap = new GameObject("Bootstrap");
-                SceneManager.MoveGameObjectToScene(bootstrap, scene);
-                var boot = bootstrap.AddComponent<BrawlBootstrap>();
-                boot.FixedTimeStep = 0.02f;
-            }
-
-            if (Object.FindObjectOfType<BrawlGameManager>() == null)
-            {
-                GameObject gm = new GameObject("GameManager");
-                SceneManager.MoveGameObjectToScene(gm, scene);
-                gm.AddComponent<NetworkIdentity>();
-                var brawlGm = gm.AddComponent<BrawlGameManager>();
-                brawlGm.SpectatorIsland = new Vector3(60f, 3f, 60f);
-                brawlGm.RoundDurationSeconds = 60f;
-                brawlGm.HoldScoreInterval = 0.5f;
-                brawlGm.HoldScorePoints = 1;
-                brawlGm.RoundRestartDelay = 30f;
-                brawlGm.ContinueDecisionSeconds = 30f;
-                brawlGm.WaitingDurationSeconds = 30f;
-            }
-
-            Canvas canvas = Object.FindObjectOfType<Canvas>();
-            if (canvas != null && canvas.GetComponentInChildren<BrawlMatchHud>(true) == null)
-                BrawlHudSetup.BuildUnderCanvas(canvas);
+            if (Object.FindObjectOfType<BrawlSession>() == null)
+                BrawlSessionSetup.PackActiveScene();
 
             if (Object.FindObjectOfType<NetworkStartPosition>() == null)
             {
