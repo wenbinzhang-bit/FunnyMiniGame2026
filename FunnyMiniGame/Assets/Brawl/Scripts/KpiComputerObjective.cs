@@ -33,6 +33,7 @@ namespace Brawl
         [Min(0.1f)] public float TypingMaxDistance = 14f;
 
         [SyncVar(hook = nameof(OnHolderNetIdChanged))] uint holderNetId;
+        [SyncVar] bool thrown;
 
         NetFAnnequinController serverHolder;
         MaterialPropertyBlock pickupPropertyBlock;
@@ -40,12 +41,24 @@ namespace Brawl
         Vector3 spawnPosition;
         Quaternion spawnRotation;
         bool hasSpawnPose;
+        uint throwerNetId;
+        float thrownUntil;
+        float throwerImmunityUntil;
+        bool throwerCollisionRestored;
+        readonly Collider[] hitBuffer = new Collider[24];
         static readonly int PickupPulseEnabledId = Shader.PropertyToID("_PickupPulseEnabled");
 
         public uint HolderNetId => holderNetId;
         public bool IsHeld => holderNetId != 0u;
+        public bool IsThrown => thrown;
+        public uint ThrowerNetId => throwerNetId;
         public NetFAnnequinController ServerHolder => serverHolder;
         public int ScorePointsPerTick => Mathf.Max(1, PointsPerHoldTick);
+        const float ThrowLifetimeSeconds = 2.6f;
+        const float ThrowerImmunitySeconds = 0.4f;
+        const float MinThrowHitSpeed = 2.2f;
+        const float ClearThrownSpeed = 1.15f;
+        const float ThrowHitRadius = 0.78f;
 
         public override void OnStartServer()
         {
@@ -56,6 +69,7 @@ namespace Brawl
             hasSpawnPose = true;
             serverHolder = null;
             holderNetId = 0u;
+            ClearThrownState();
             SetServerBodyHeld(false);
             ApplyPickupPulse(true);
         }
@@ -122,6 +136,44 @@ namespace Brawl
             typingLoopSource.rolloffMode = AudioRolloffMode.Logarithmic;
         }
 
+        void FixedUpdate()
+        {
+            if (!isServer || IsHeld) return;
+            if (!thrown) return;
+
+            if (!throwerCollisionRestored && Time.time >= throwerImmunityUntil)
+            {
+                NetFAnnequinController thrower = FindPlayerByNetId(throwerNetId);
+                if (thrower != null)
+                    ServerSetIgnorePlayer(thrower, false);
+                throwerCollisionRestored = true;
+            }
+
+            if (Time.time >= thrownUntil || CurrentSpeed() < ClearThrownSpeed)
+            {
+                if (!ServerTryReturnThrownComputer())
+                {
+                    ClearThrownState();
+                    ServerIgnoreAllPlayerCollisions();
+                }
+                return;
+            }
+
+            ServerTryHitNearbyPlayers();
+        }
+
+        void OnCollisionEnter(Collision collision)
+        {
+            if (!isServer || !thrown || IsHeld || collision == null) return;
+            ServerTryForceCatch(collision.collider);
+        }
+
+        void OnCollisionStay(Collision collision)
+        {
+            if (!isServer || !thrown || IsHeld || collision == null) return;
+            ServerTryForceCatch(collision.collider);
+        }
+
         void LateUpdate()
         {
             if (!IsHeld) return;
@@ -148,6 +200,7 @@ namespace Brawl
 
             serverHolder = holder;
             holderNetId = holder.netId;
+            ClearThrownState();
             SetServerBodyHeld(true);
             return true;
         }
@@ -171,7 +224,24 @@ namespace Brawl
 
             serverHolder = null;
             holderNetId = 0u;
+            ClearThrownState();
             ApplyLoosePose(position, velocity);
+        }
+
+        [Server]
+        public void ServerThrow(NetFAnnequinController thrower, Vector3 position, Vector3 velocity)
+        {
+            serverHolder = null;
+            holderNetId = 0u;
+            throwerNetId = thrower != null ? thrower.netId : 0u;
+            thrownUntil = Time.time + ThrowLifetimeSeconds;
+            throwerImmunityUntil = Time.time + ThrowerImmunitySeconds;
+            throwerCollisionRestored = thrower == null;
+            thrown = true;
+            ApplyLoosePose(position, velocity, false);
+            if (Body != null)
+                Body.angularVelocity = Vector3.Cross(velocity.normalized, Vector3.up) * 10f;
+            ServerEnablePlayerCollisionsExcept(thrower);
         }
 
         [Server]
@@ -179,6 +249,7 @@ namespace Brawl
         {
             serverHolder = null;
             holderNetId = 0u;
+            ClearThrownState();
             Vector3 pos = hasSpawnPose ? spawnPosition : transform.position;
             Quaternion rot = hasSpawnPose ? spawnRotation : transform.rotation;
             transform.SetPositionAndRotation(pos, rot);
@@ -192,11 +263,11 @@ namespace Brawl
             return !IsHeld && transform.position.y < killY;
         }
 
-        void ApplyLoosePose(Vector3 position, Vector3 velocity)
+        void ApplyLoosePose(Vector3 position, Vector3 velocity, bool ignoreAllPlayers = true)
         {
             ResolveBody();
             transform.position = position;
-            SetServerBodyHeld(false);
+            SetServerBodyHeld(false, ignoreAllPlayers);
             if (Body == null) return;
 
             Body.position = position;
@@ -204,7 +275,7 @@ namespace Brawl
             Body.angularVelocity = Vector3.zero;
         }
 
-        void SetServerBodyHeld(bool held)
+        void SetServerBodyHeld(bool held, bool ignoreAllPlayers = true)
         {
             ResolveBody();
             if (Body == null) return;
@@ -227,7 +298,8 @@ namespace Brawl
                 Body.detectCollisions = true;
                 Body.velocity = Vector3.zero;
                 Body.angularVelocity = Vector3.zero;
-                ServerIgnoreAllPlayerCollisions();
+                if (ignoreAllPlayers)
+                    ServerIgnoreAllPlayerCollisions();
             }
         }
 
@@ -241,6 +313,26 @@ namespace Brawl
         [Server]
         public void ServerIgnoreCollisionsWith(NetFAnnequinController player)
         {
+            ServerSetIgnorePlayer(player, true);
+        }
+
+        [Server]
+        public void ServerIgnoreAllPlayerCollisions()
+        {
+            foreach (NetFAnnequinController player in FindObjectsOfType<NetFAnnequinController>())
+                ServerSetIgnorePlayer(player, true);
+        }
+
+        [Server]
+        void ServerEnablePlayerCollisionsExcept(NetFAnnequinController except)
+        {
+            foreach (NetFAnnequinController player in FindObjectsOfType<NetFAnnequinController>())
+                ServerSetIgnorePlayer(player, player == except);
+        }
+
+        [Server]
+        void ServerSetIgnorePlayer(NetFAnnequinController player, bool ignore)
+        {
             Collider self = GetComponent<Collider>();
             if (self == null || player == null) return;
 
@@ -248,25 +340,104 @@ namespace Brawl
             for (int i = 0; i < cols.Length; i++)
             {
                 if (cols[i] == null || cols[i] == self) continue;
-                Physics.IgnoreCollision(self, cols[i], true);
+                Physics.IgnoreCollision(self, cols[i], ignore);
             }
         }
 
         [Server]
-        public void ServerIgnoreAllPlayerCollisions()
+        void ServerTryHitNearbyPlayers()
         {
+            if (CurrentSpeed() < MinThrowHitSpeed) return;
+
+            int count = Physics.OverlapSphereNonAlloc(transform.position, ThrowHitRadius, hitBuffer,
+                Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+            for (int i = 0; i < count; i++)
+            {
+                if (ServerTryForceCatch(hitBuffer[i]))
+                    return;
+            }
+        }
+
+        [Server]
+        bool ServerTryForceCatch(Collider hitCollider)
+        {
+            if (!thrown || IsHeld || hitCollider == null) return false;
+            if (CurrentSpeed() < MinThrowHitSpeed) return false;
+
+            NetFAnnequinController target = hitCollider.GetComponentInParent<NetFAnnequinController>();
+            if (target == null) return false;
+            if (target.IsDead || target.IsKnockedDown || target.IsGrabbed || target.IsHoldingComputer)
+                return false;
+            if (target.netId == throwerNetId && Time.time < throwerImmunityUntil)
+                return false;
+
+            if (!ServerTryClaim(target)) return false;
+            target.ServerForceReceiveComputer(this);
+            return true;
+        }
+
+        [Server]
+        bool ServerTryReturnThrownComputer()
+        {
+            if (!BrawlGameManager.PassTheBuckDumpActive) return false;
+
+            uint previousThrower = throwerNetId;
+            NetFAnnequinController thrower = FindPlayerByNetId(previousThrower);
+            if (ServerGiveToCatcher(thrower, false))
+                return true;
+
+            NetFAnnequinController nearest = null;
+            float bestDist = float.MaxValue;
             foreach (NetFAnnequinController player in FindObjectsOfType<NetFAnnequinController>())
-                ServerIgnoreCollisionsWith(player);
+            {
+                if (player == null || player.IsDead || player.IsKnockedDown || player.IsGrabbed)
+                    continue;
+                if (player.IsHoldingComputer) continue;
+                float dist = (player.transform.position - transform.position).sqrMagnitude;
+                if (dist >= bestDist) continue;
+                bestDist = dist;
+                nearest = player;
+            }
+
+            return ServerGiveToCatcher(nearest, true);
+        }
+
+        [Server]
+        bool ServerGiveToCatcher(NetFAnnequinController target, bool applyCatchStun)
+        {
+            if (target == null || target.IsDead || target.IsKnockedDown || target.IsGrabbed) return false;
+            if (!ServerTryClaim(target)) return false;
+            target.ServerForceReceiveComputer(this, applyCatchStun);
+            return true;
+        }
+
+        void ClearThrownState()
+        {
+            thrown = false;
+            throwerNetId = 0u;
+            thrownUntil = 0f;
+            throwerImmunityUntil = 0f;
+            throwerCollisionRestored = true;
+        }
+
+        float CurrentSpeed()
+        {
+            ResolveBody();
+            return Body != null ? Body.velocity.magnitude : 0f;
         }
 
         NetFAnnequinController FindHolder()
         {
             if (serverHolder != null) return serverHolder;
-            if (holderNetId == 0u) return null;
+            return FindPlayerByNetId(holderNetId);
+        }
 
+        static NetFAnnequinController FindPlayerByNetId(uint netId)
+        {
+            if (netId == 0u) return null;
             foreach (NetFAnnequinController player in FindObjectsOfType<NetFAnnequinController>())
             {
-                if (player != null && player.netId == holderNetId)
+                if (player != null && player.netId == netId)
                     return player;
             }
 

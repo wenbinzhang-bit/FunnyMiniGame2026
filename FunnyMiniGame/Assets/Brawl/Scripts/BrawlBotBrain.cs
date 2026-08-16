@@ -4,7 +4,8 @@ using UnityEngine;
 namespace Brawl
 {
     /// <summary>
-    /// 服务端 Bot：没人抱电脑就去捡，有人抱就追着打，自己抱着就躲开。
+    /// 服务端 Bot：抢电脑关抱着就逃；甩锅关靠近就砸，看见飞来的电脑就躲。
+    /// 甩锅关最后 30 秒：低分去抢锅砸最高分，砸中后散开；这期间不能放下，只能砸给别人。
     /// </summary>
     [DefaultExecutionOrder(50)]
     public sealed class BrawlBotBrain : MonoBehaviour
@@ -92,7 +93,7 @@ namespace Brawl
 
         void Think()
         {
-            if (!self.InputActive || self.IsDead || self.IsKnockedDown || self.IsGrabbed)
+            if (!self.InputActive || self.IsDead || self.IsKnockedDown || self.IsGrabbed || self.IsCatchStunned)
             {
                 StopMoving();
                 return;
@@ -104,16 +105,38 @@ namespace Brawl
                 return;
             }
 
+            bool passTheBuck = BrawlGameManager.PassTheBuckActive;
+            bool dumpPhase = passTheBuck && BrawlGameManager.PassTheBuckDumpActive;
+            bool behindLeader = self.Score < CurrentLeaderScore();
             if (self.IsHoldingComputer)
             {
+                if (passTheBuck && TryDumpComputer(dumpPhase, behindLeader))
+                    return;
+
                 MoveSmart(FleeDir(), true);
                 return;
             }
 
             KpiComputerObjective computer = NearestComputer();
-            if (computer != null && !computer.IsHeld)
+            if (computer != null && computer.IsThrown)
+            {
+                float thrownDistance = Flat(computer.transform.position - self.transform.position).magnitude;
+                if (thrownDistance < 6f)
+                {
+                    DodgeThrown(computer);
+                    return;
+                }
+            }
+
+            if (computer != null && !computer.IsHeld && !computer.IsThrown)
             {
                 Vector3 to = Flat(computer.transform.position - self.transform.position);
+                if (dumpPhase && !behindLeader)
+                {
+                    KeepAwayFromPoint(computer.transform.position, 6f);
+                    return;
+                }
+
                 if (to.magnitude <= 1.7f)
                 {
                     self.ServerBotFace(to);
@@ -122,7 +145,7 @@ namespace Brawl
                 }
                 else
                 {
-                    MoveSmart(to);
+                    MoveSmart(to, dumpPhase);
                 }
 
                 return;
@@ -133,6 +156,12 @@ namespace Brawl
                 : NearestHolder();
             if (holder != null && holder != self)
             {
+                if (dumpPhase)
+                {
+                    IsolateDumpHolder(holder, behindLeader);
+                    return;
+                }
+
                 Vector3 to = Flat(holder.transform.position - self.transform.position);
                 if (to.magnitude <= 2f)
                 {
@@ -390,6 +419,144 @@ namespace Brawl
             }
 
             hasArenaCenter = false;
+        }
+
+        bool TryDumpComputer(bool dumpPhase, bool behindLeader)
+        {
+            NetFAnnequinController target = dumpPhase && behindLeader
+                ? HighestOther() ?? NearestOther()
+                : HighestOtherWithin(3.6f) ?? NearestOther();
+            float range = dumpPhase ? 8.5f : 3.6f;
+
+            if (TryThrowAt(target, range, dumpPhase && !behindLeader))
+                return true;
+
+            if (dumpPhase && target != null)
+            {
+                Vector3 to = Flat(target.transform.position - self.transform.position);
+                self.ServerBotFace(to);
+                MoveSmart(to, true);
+                return true;
+            }
+
+            return false;
+        }
+
+        bool TryThrowAt(NetFAnnequinController target, float maxRange, bool throwEvenIfAlone)
+        {
+            Vector3 throwDir = self.transform.forward;
+            if (target != null)
+            {
+                Vector3 to = Flat(target.transform.position - self.transform.position);
+                if (to.magnitude > maxRange) return false;
+                if (to.sqrMagnitude > 0.01f)
+                    throwDir = to.normalized;
+                self.ServerBotFace(to);
+            }
+            else if (!throwEvenIfAlone)
+            {
+                return false;
+            }
+
+            StopMoving();
+            self.ServerBotThrowComputer(throwDir);
+            return true;
+        }
+
+        void IsolateDumpHolder(NetFAnnequinController holder, bool behindLeader)
+        {
+            NetFAnnequinController keepAway = holder;
+            if (behindLeader && holder.Score < CurrentLeaderScore())
+                keepAway = HighestOther() ?? holder;
+
+            Vector3 away = Flat(self.transform.position - keepAway.transform.position);
+            MoveSmart(away.sqrMagnitude > 0.01f ? away : FleeDir(), true);
+        }
+
+        void KeepAwayFromPoint(Vector3 point, float minDistance)
+        {
+            Vector3 away = Flat(self.transform.position - point);
+            if (away.magnitude < minDistance)
+                MoveSmart(away.sqrMagnitude > 0.01f ? away : FleeDir(), true);
+            else
+                StopMoving();
+        }
+
+        int CurrentLeaderScore()
+        {
+            int best = self.Score;
+            foreach (NetFAnnequinController other in FindObjectsOfType<NetFAnnequinController>())
+            {
+                if (other == null || other.IsDead) continue;
+                if (other.Score > best)
+                    best = other.Score;
+            }
+
+            return best;
+        }
+
+        NetFAnnequinController HighestOther()
+        {
+            NetFAnnequinController best = null;
+            int bestScore = int.MinValue;
+            float bestDist = float.MaxValue;
+            foreach (NetFAnnequinController other in FindObjectsOfType<NetFAnnequinController>())
+            {
+                if (other == null || other == self || other.IsDead || other.IsKnockedDown) continue;
+                float dist = Flat(other.transform.position - self.transform.position).sqrMagnitude;
+                if (other.Score > bestScore || (other.Score == bestScore && dist < bestDist))
+                {
+                    bestScore = other.Score;
+                    bestDist = dist;
+                    best = other;
+                }
+            }
+
+            return best;
+        }
+
+        NetFAnnequinController HighestOtherWithin(float range)
+        {
+            NetFAnnequinController leader = HighestOther();
+            if (leader == null) return null;
+            float dist = Flat(leader.transform.position - self.transform.position).magnitude;
+            return dist <= range ? leader : null;
+        }
+
+        void DodgeThrown(KpiComputerObjective computer)
+        {
+            Vector3 toComputer = Flat(computer.transform.position - self.transform.position);
+            Vector3 velocity = computer.Body != null
+                ? Flat(computer.Body.velocity)
+                : Vector3.zero;
+            Vector3 away = toComputer.sqrMagnitude > 0.01f
+                ? -toComputer.normalized
+                : FleeDir();
+            Vector3 side = Vector3.Cross(Vector3.up, away).normalized * preferredRecoverySide;
+            if (velocity.sqrMagnitude > 0.2f && Vector3.Dot(velocity.normalized, toComputer.normalized) < -0.1f)
+                away += side * 1.2f;
+            else
+                away += side * 0.65f;
+
+            MoveSmart(away, true);
+        }
+
+        NetFAnnequinController NearestOther()
+        {
+            NetFAnnequinController best = null;
+            float bestDist = float.MaxValue;
+            foreach (NetFAnnequinController other in FindObjectsOfType<NetFAnnequinController>())
+            {
+                if (other == null || other == self || other.IsDead || other.IsKnockedDown) continue;
+                float dist = Flat(other.transform.position - self.transform.position).sqrMagnitude;
+                if (dist < bestDist)
+                {
+                    bestDist = dist;
+                    best = other;
+                }
+            }
+
+            return best;
         }
 
         Vector3 FleeDir()

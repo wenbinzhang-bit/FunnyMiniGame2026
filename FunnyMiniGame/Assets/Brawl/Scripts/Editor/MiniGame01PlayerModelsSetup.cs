@@ -165,6 +165,7 @@ namespace Brawl.EditorTools
                 controller.ComputerDropForward = 0.8f;
                 controller.TurboDurationSeconds = 5f;
                 controller.TurboRechargeSeconds = 5f;
+                controller.TurboHoldComputerDrainMultiplier = 2f;
                 controller.KnockdownGroundSeconds = 1.55f;
                 controller.GetUpFaceSeconds = 1.35f;
                 controller.GetUpBackSeconds = 1.65f;

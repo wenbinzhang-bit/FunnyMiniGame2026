@@ -135,6 +135,9 @@ namespace Brawl.EditorTools
             to.HudScoreMax = from.HudScoreMax;
             to.WaitingDurationSeconds = from.WaitingDurationSeconds;
             to.RulesDurationSeconds = from.RulesDurationSeconds;
+            to.BuckPenalty = from.BuckPenalty;
+            to.CatchStunSeconds = from.CatchStunSeconds;
+            to.ThrowSpeed = from.ThrowSpeed;
             to.AirWall = null;
         }
 

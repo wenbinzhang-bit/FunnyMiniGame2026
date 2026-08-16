@@ -104,6 +104,8 @@ namespace Brawl
         Image timerFill;
         Color timerRingBase;
         Color timerFillBase;
+        Color statusTextBase;
+        bool hasStatusTextBase;
         float displayedTurbo = 1f;
         bool hasDisplayedTurbo;
         string lastHudScene;
@@ -286,6 +288,8 @@ namespace Brawl
                         : $"点击「{(gm.HudHasNextLevel ? "下一关" : "查看总成绩")}」或按 Enter 继续，否则 {FormatTime(remaining)} 后自动继续";
                 else
                     StatusText.text = TrimStatus(gm != null ? gm.HudStatusText : "");
+
+                ApplyPassTheBuckDumpStatusColor(gm != null && gm.HudIsPlaying && gm.IsPassTheBuckDumpPhase);
             }
 
             int slotCount = Slots != null ? Slots.Length : 0;
@@ -559,13 +563,15 @@ namespace Brawl
             if (DebugTimerButton != null)
                 DebugTimerButton.gameObject.SetActive(show);
             if (!show) return;
+            if (DebugTimerLabel != null)
+                DebugTimerLabel.text = "当局剩30秒";
             DebugTimerButton.transform.SetAsLastSibling();
         }
 
         void OnDebugTimerClicked()
         {
             if (BrawlGameManager.Instance != null)
-                BrawlGameManager.Instance.DebugSetRemainingSeconds(10f);
+                BrawlGameManager.Instance.DebugSetRemainingSeconds(30f);
         }
 
         void EnsureDebugTimerButton()
@@ -618,7 +624,7 @@ namespace Brawl
             DebugTimerLabel.alignment = TextAnchor.MiddleCenter;
             DebugTimerLabel.color = Color.white;
             DebugTimerLabel.raycastTarget = false;
-            DebugTimerLabel.text = "当局剩10秒";
+            DebugTimerLabel.text = "当局剩30秒";
             Outline outline = labelObject.AddComponent<Outline>();
             outline.effectColor = new Color(0f, 0f, 0f, 0.7f);
             outline.effectDistance = new Vector2(1f, -1f);
@@ -1294,15 +1300,7 @@ namespace Brawl
             RulesBody.horizontalOverflow = HorizontalWrapMode.Wrap;
             RulesBody.verticalOverflow = VerticalWrapMode.Overflow;
             RulesBody.lineSpacing = 1.12f;
-            RulesBody.text =
-                "抱住笔记本电脑并坚持不放，就能持续得分。\n" +
-                "被拳头打中会丢掉电脑，自己也会被打飞。\n" +
-                "先到 99 分，或时间结束时按分数排名。\n" +
-                "掉出场地会送回出生点，不会淘汰。\n\n" +
-                "WASD 移动　　空格 跳跃　　Shift 加速\n" +
-                "左键 出拳　　按住右键 抱起电脑　　松开右键 放下\n" +
-                "Esc 释放鼠标　　Alt 重新捕获鼠标\n\n" +
-                "开局有空气墙，倒计时结束后撤墙，正式开打。";
+            RulesBody.text = BrawlLevelInfo.HoldKpiRules;
 
             RulesCountdown = CreatePlainText(cardRect, "Countdown", fallbackFont, 22, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(1f, 0.84f, 0.28f, 1f));
             SetHudRect(RulesCountdown.rectTransform, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 22f), new Vector2(560f, 36f));
@@ -1626,6 +1624,25 @@ namespace Brawl
             }
 
             RankingBody.text = lines.Count == 0 ? "无人参赛" : string.Join("\n", lines);
+        }
+
+        void ApplyPassTheBuckDumpStatusColor(bool dumpPhase)
+        {
+            if (StatusText == null) return;
+            if (!hasStatusTextBase)
+            {
+                statusTextBase = StatusText.color;
+                hasStatusTextBase = true;
+            }
+
+            if (!dumpPhase)
+            {
+                StatusText.color = statusTextBase;
+                return;
+            }
+
+            float pulse = Mathf.PingPong(Time.unscaledTime * WarningBlinkSpeed, 1f);
+            StatusText.color = Color.Lerp(TimerWarningColor, TimerWarningFlashColor, pulse);
         }
 
         void ApplyTimerWarning(bool playing, float remaining)
