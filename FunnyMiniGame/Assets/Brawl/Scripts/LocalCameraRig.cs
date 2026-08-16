@@ -102,7 +102,7 @@ namespace Brawl
             if (!isLocalPlayer) return;
 
             BrawlGameManager gm = BrawlGameManager.Instance;
-            bool unlockForUi = gm != null && (gm.HudIsRoundEnd || gm.HudShowLobbyActions || gm.HudIsFinalKpi);
+            bool unlockForUi = gm != null && (gm.HudIsRoundEnd || gm.HudIsFinalKpi);
             if (unlockForUi)
             {
                 if (IsCursorCaptured)

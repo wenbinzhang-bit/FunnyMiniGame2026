@@ -73,7 +73,9 @@ namespace Brawl
         public bool HudAirWallActive => airWallActive;
         public bool HudContinueRequested => nextRoundRequested;
         public bool HudIsHost => NetworkServer.active;
-        public bool HudShowLobbyActions => ServerCanAcceptLobbyReady();
+        public bool HudShowLobbyActions =>
+            BrawlLevelCatalog.ActiveSceneIsLauncher()
+            && ServerCanAcceptLobbyReady();
 
         public bool ServerCanAcceptLobbyReady()
         {
