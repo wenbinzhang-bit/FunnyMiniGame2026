@@ -101,6 +101,9 @@ namespace Brawl
         public bool HudIsHost => NetworkServer.active;
         public BrawlPlayMode HudPlayMode => playMode;
         public bool IsPassTheBuck => playMode == BrawlPlayMode.PassTheBuck;
+        public bool HudIsElimIntermission => IsPassTheBuck && elimIntermission;
+        public bool HudHidePlayTimer => IsPassTheBuck && HudIsPlaying;
+        public bool HudShowPotDanger => IsPassTheBuck && HudIsPlaying && !elimIntermission;
         public int ActiveBuckPenalty => Mathf.Max(0, buckPenalty);
         public float ActiveCatchStunSeconds => Mathf.Max(0.2f, catchStunSeconds);
         public float ActiveThrowSpeed => Mathf.Max(1f, throwSpeed);
@@ -272,7 +275,8 @@ namespace Brawl
         [SyncVar] int elimRoundIndex;
         [SyncVar] bool elimIntermission;
 
-        static readonly float[] ElimRoundSeconds = { 60f, 30f, 15f };
+        const float ElimDurationMinSeconds = 5f;
+        const float ElimDurationMaxSeconds = 30f;
         const float ElimIntermissionSeconds = 3.2f;
         const int ElimRoundScoreStep = 33;
 
@@ -790,7 +794,7 @@ namespace Brawl
                 rulesEndsAt = NetworkTime.time + Mathf.Max(1f, RulesDurationSeconds);
 
             float remain = Mathf.Max(0f, (float)(rulesEndsAt - NetworkTime.time));
-            statusText = $"请阅读本局规则，{Mathf.CeilToInt(remain)} 秒后进入空气墙等待区";
+            statusText = "请阅读本局规则";
             if (remain <= 0f)
                 ServerEnterWaiting(false);
         }
@@ -1211,12 +1215,9 @@ namespace Brawl
             Debug.Log($"BRAWL_SMOKE: ELIM_ROUND {elimRoundIndex + 1} duration={duration}");
         }
 
-        static float ElimDurationForRound(int index)
+        static float ElimDurationForRound(int _)
         {
-            if (index < 0) index = 0;
-            if (index < ElimRoundSeconds.Length)
-                return ElimRoundSeconds[index];
-            return ElimRoundSeconds[ElimRoundSeconds.Length - 1];
+            return Random.Range((int)ElimDurationMinSeconds, (int)ElimDurationMaxSeconds + 1);
         }
 
         [Server]
@@ -1311,10 +1312,9 @@ namespace Brawl
             }
 
             elimIntermission = true;
-            float nextDuration = ElimDurationForRound(elimRoundIndex + 1);
             roundEndsAt = NetworkTime.time + ElimIntermissionSeconds;
-            statusText = $"{outName} 被炸飞淘汰！下一轮 {nextDuration:0} 秒";
-            Debug.Log($"BRAWL_SMOKE: ELIMINATED {outName} next={nextDuration}");
+            statusText = $"{outName} 被炸飞淘汰！下一轮马上开始";
+            Debug.Log($"BRAWL_SMOKE: ELIMINATED {outName}");
         }
 
         [Server]
@@ -1637,16 +1637,15 @@ namespace Brawl
         [Server]
         string FormatPlayingStatus()
         {
-            float remaining = Mathf.Max(0f, (float)(roundEndsAt - NetworkTime.time));
             string holders = HolderLine();
             if (playMode == BrawlPlayMode.PassTheBuck)
             {
                 int round = Mathf.Max(0, elimRoundIndex) + 1;
                 int living = CountLivingPlayers();
-                return $"第{round}轮 | 剩余 {living} 人 | {FormatTime(remaining)} | {holders} | 只剩一人结算";
+                return $"第{round}轮 | 剩余 {living} 人 | {holders} | 只剩一人结算";
             }
 
-            return $"剩余 {FormatTime(remaining)} | {holders} | 持电脑每{HoldScoreInterval:0.##}秒+{HoldScorePoints}分";
+            return $"{holders} | 持电脑每{HoldScoreInterval:0.##}秒+{HoldScorePoints}分";
         }
 
         [Server]
@@ -1846,7 +1845,8 @@ namespace Brawl
             rulesBody = info != null && !string.IsNullOrEmpty(info.Rules)
                 ? info.Rules
                 : DefaultRulesText();
-            if (playMode == BrawlPlayMode.PassTheBuck && !rulesBody.Contains("只剩一人"))
+            if (playMode == BrawlPlayMode.PassTheBuck
+                && (!rulesBody.Contains("只剩一人") || rulesBody.Contains("60 秒") || !rulesBody.Contains("5 到 30")))
                 rulesBody = BrawlLevelInfo.PassTheBuckRules;
         }
 

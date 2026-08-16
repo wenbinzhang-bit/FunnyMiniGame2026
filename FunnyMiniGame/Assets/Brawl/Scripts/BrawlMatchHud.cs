@@ -123,6 +123,8 @@ namespace Brawl
             new Dictionary<BrawlRoundResultRules.Grade, AudioClip>();
         Image timerRing;
         Image timerFill;
+        Image potDangerIcon;
+        Sprite potDangerSprite;
         Color timerRingBase;
         Color timerFillBase;
         Color statusTextBase;
@@ -167,6 +169,7 @@ namespace Brawl
         {
             EnsureTurboVisuals();
             EnsureLevelHint();
+            EnsurePotDangerIcon();
             EnsureCursorHint();
             EnsureNextRoundButton();
             EnsureRoundResultPanel();
@@ -311,11 +314,19 @@ namespace Brawl
             CollectPlayers();
 
             float remaining = gm != null ? gm.HudRemainingSeconds : 0f;
+            bool hidePlayTimer = gm != null && gm.HudHidePlayTimer;
             if (TimerText != null)
-                TimerText.text = FormatTime(remaining);
+            {
+                TimerText.gameObject.SetActive(!hidePlayTimer);
+                if (!hidePlayTimer)
+                    TimerText.text = FormatTime(remaining);
+            }
             BindLevelHint(gm);
+            BindPotDanger(gm, remaining);
 
-            ApplyTimerWarning(gm != null && (gm.HudIsPlaying || (gm.HudIsWaiting && remaining > 0f) || gm.HudIsRoundEnd), remaining);
+            ApplyTimerWarning(
+                !hidePlayTimer && gm != null && (gm.HudIsPlaying || (gm.HudIsWaiting && remaining > 0f) || gm.HudIsRoundEnd),
+                remaining);
 
             bool launcherLobby = gm != null && gm.HudIsLobby && BrawlLevelCatalog.ActiveSceneIsLauncher();
             if (StatusText != null)
@@ -326,7 +337,7 @@ namespace Brawl
                         ? "大厅等待加入，房主点击开始进入第一关"
                         : TrimStatus(gm.HudStatusText);
                 else if (gm != null && gm.HudIsShowingRules)
-                    StatusText.text = $"请阅读{gm.HudRulesTitle}，{Mathf.CeilToInt(remaining)} 秒后开始";
+                    StatusText.text = $"请阅读{gm.HudRulesTitle}";
                 else if (gm != null && gm.HudIsWaiting)
                     StatusText.text = string.IsNullOrEmpty(gm.HudStatusText)
                         ? "空气墙等待中，结束后正式开始"
@@ -2081,6 +2092,86 @@ namespace Brawl
                 LevelHintText.text = $"第{index + 1}/{BrawlLevelCatalog.MaxLevelCount}关";
         }
 
+        void BindPotDanger(BrawlGameManager gm, float remaining)
+        {
+            EnsurePotDangerIcon();
+            bool show = potDangerIcon != null && gm != null && gm.HudShowPotDanger;
+            if (potDangerIcon != null)
+                potDangerIcon.gameObject.SetActive(show);
+            if (!show) return;
+
+            float heat = Mathf.InverseLerp(24f, 0.35f, remaining);
+            float hz = Mathf.Lerp(0.65f, 10f, heat * heat);
+            float pulse = Mathf.PingPong(Time.unscaledTime * hz * 2f, 1f);
+            Color dim = new Color(0.62f, 0.22f, 0.10f, 0.28f);
+            Color hot = Color.Lerp(TimerWarningColor, TimerWarningFlashColor, Mathf.Clamp01(heat + 0.15f));
+            potDangerIcon.color = Color.Lerp(dim, hot, 0.22f + pulse * 0.78f);
+
+            if (timerRing != null)
+                timerRing.color = Color.Lerp(timerRingBase, hot, 0.15f + pulse * 0.55f);
+            if (timerFill != null)
+                timerFill.color = Color.Lerp(timerFillBase, new Color(0.42f, 0.08f, 0.06f, 0.92f), pulse * (0.35f + heat * 0.65f));
+            if (LevelHintText != null && LevelHintText.gameObject.activeSelf)
+                LevelHintText.color = Color.Lerp(TimerNormalColor, hot, 0.2f + pulse * 0.8f);
+        }
+
+        void EnsurePotDangerIcon()
+        {
+            if (potDangerIcon != null) return;
+            Transform timer = TimerText != null ? TimerText.transform.parent : null;
+            if (timer == null) return;
+
+            Transform existing = timer.Find("PotDanger");
+            if (existing != null)
+                potDangerIcon = existing.GetComponent<Image>();
+            if (potDangerIcon == null)
+            {
+                var go = new GameObject("PotDanger", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+                go.transform.SetParent(timer, false);
+                potDangerIcon = go.GetComponent<Image>();
+            }
+
+            if (potDangerSprite == null)
+                potDangerSprite = CreatePotDangerSprite();
+            potDangerIcon.sprite = potDangerSprite;
+            potDangerIcon.preserveAspect = true;
+            potDangerIcon.raycastTarget = false;
+            potDangerIcon.color = TimerWarningColor;
+            potDangerIcon.gameObject.SetActive(false);
+        }
+
+        static Sprite CreatePotDangerSprite()
+        {
+            const int size = 64;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false)
+            {
+                filterMode = FilterMode.Bilinear,
+                wrapMode = TextureWrapMode.Clamp
+            };
+            var pixels = new Color[size * size];
+            for (int y = 0; y < size; y++)
+            {
+                for (int x = 0; x < size; x++)
+                {
+                    float nx = (x - 31.5f) / 22f;
+                    float ny = (y - 26f) / 16.5f;
+                    float bowl = nx * nx + ny * ny;
+                    bool body = bowl <= 1f && bowl >= 0.42f && y <= 42;
+                    bool rim = y >= 39 && y <= 44 && Mathf.Abs(x - 32) <= 24;
+                    bool bottom = y >= 12 && y <= 16 && Mathf.Abs(x - 32) <= 10;
+                    float hx = Mathf.Abs(x - 32);
+                    bool handle = y >= 30 && y <= 38 && hx >= 22 && hx <= 30;
+                    pixels[y * size + x] = body || rim || bottom || handle
+                        ? Color.white
+                        : Color.clear;
+                }
+            }
+
+            tex.SetPixels(pixels);
+            tex.Apply(false, true);
+            return Sprite.Create(tex, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), 64f);
+        }
+
         void EnsureLevelHint()
         {
             if (LevelHintText != null) return;
@@ -2204,6 +2295,8 @@ namespace Brawl
                     LevelHintText.fontStyle = FontStyle.Bold;
                     LevelHintText.alignment = TextAnchor.MiddleCenter;
                 }
+                if (potDangerIcon != null)
+                    SetHudRect(potDangerIcon.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 6f), new Vector2(34f, 34f));
             }
 
             if (StatusText != null)
@@ -2426,6 +2519,9 @@ namespace Brawl
 
         void ApplyTimerWarning(bool playing, float remaining)
         {
+            if (potDangerIcon != null && potDangerIcon.gameObject.activeSelf)
+                return;
+
             bool warning = playing && remaining > 0f && remaining <= WarningSeconds;
             Color textColor = TimerNormalColor;
             Color ringColor = timerRingBase;
