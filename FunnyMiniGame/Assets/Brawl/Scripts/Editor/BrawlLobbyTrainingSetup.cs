@@ -127,8 +127,8 @@ namespace Brawl.EditorTools
             }
 
             ground.transform.SetParent(stage, true);
-            ground.transform.localPosition = new Vector3(0f, -0.05f, 0f);
-            ground.transform.localScale = new Vector3(36f, 0.1f, 36f);
+            ground.transform.localPosition = new Vector3(0f, -0.25f, 0f);
+            ground.transform.localScale = new Vector3(36f, 0.5f, 36f);
             MeshRenderer renderer = ground.GetComponent<MeshRenderer>();
             if (renderer != null)
                 renderer.enabled = false;
