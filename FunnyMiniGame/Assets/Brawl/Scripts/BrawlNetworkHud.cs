@@ -266,19 +266,19 @@ namespace Brawl
         void RefreshServerList()
         {
             if (serverListContent == null || discovery == null) return;
+            var servers = discovery.CopyFoundServers();
+            if (emptyListText != null)
+            {
+                emptyListText.gameObject.SetActive(servers.Count == 0);
+                emptyListText.text = discovery.BrowseHint;
+            }
+
             string fingerprint = discovery.ListFingerprint();
             if (fingerprint == lastListFingerprint) return;
             lastListFingerprint = fingerprint;
 
             for (int i = serverListContent.childCount - 1; i >= 0; i--)
                 Destroy(serverListContent.GetChild(i).gameObject);
-
-            var servers = discovery.CopyFoundServers();
-            if (emptyListText != null)
-            {
-                emptyListText.gameObject.SetActive(servers.Count == 0);
-                emptyListText.text = "正在搜索局域网房间…";
-            }
 
             for (int i = 0; i < servers.Count; i++)
                 CreateServerRow(servers[i]);
