@@ -68,7 +68,7 @@ namespace FIMSpace.Basics
         /// <summary> Just to make turning off lock cursor less annoying </summary>
         private bool rotateCamera = true;
 
-        /// <summary> Raycast checking if there is obstacle blocking our vision </summary>
+        /// <summary> Sphere cast checking if there is obstacle blocking our vision </summary>
         private RaycastHit sightObstacleHit;
 
         [Header("Layer mask to check obstacles in sight ray")]
@@ -77,8 +77,18 @@ namespace FIMSpace.Basics
         /// <summary> Target position for camera from basic calculations, if raycast hit something, there is used other position </summary>
         private Vector3 targetPosition;
 
-        [Header("How far forward raycast should check collision for camera")]
-        public float CollisionOffset = 1f;
+        [Header("Camera collision")]
+        [Tooltip("Sphere radius used to keep the camera near plane away from walls.")]
+        [Min(0.05f)]
+        public float CollisionRadius = 0.3f;
+
+        [Tooltip("Extra clearance kept between the camera sphere and the hit surface.")]
+        [Min(0f)]
+        public float CollisionOffset = 0.15f;
+
+        [Tooltip("Camera snaps inward for safety, then restores its distance over this duration.")]
+        [Min(0f)]
+        public float CollisionReleaseSmoothTime = 0.25f;
 
         [Tooltip("Minimum world-space height above the smoothed follow point")]
         [Min(0f)]
@@ -90,6 +100,9 @@ namespace FIMSpace.Basics
         private float verticalFollowPosition;
         private float verticalFollowVelocity;
         private bool verticalFollowInitialized;
+        private float collisionDistance;
+        private float collisionDistanceVelocity;
+        private bool collisionDistanceInitialized;
 
         /// <summary>
         /// Setting some basic variables for initialization
@@ -98,6 +111,8 @@ namespace FIMSpace.Basics
         {
             targetDistance = (DistanceRanges.x + DistanceRanges.y) / 2;
             animatedDistance = DistanceRanges.y;
+            collisionDistance = animatedDistance;
+            collisionDistanceInitialized = true;
 
             targetSphericRotation = new Vector2(0f, 23f);
             animatedSphericRotation = targetSphericRotation;
@@ -184,7 +199,7 @@ namespace FIMSpace.Basics
         /// </summary>
         private void ZoomCalculations()
         {
-            if (!sightObstacleHit.transform) targetDistance = Mathf.Clamp(targetDistance, DistanceRanges.x, DistanceRanges.y);
+            targetDistance = Mathf.Clamp(targetDistance, DistanceRanges.x, DistanceRanges.y);
             animatedDistance = Mathf.Lerp(animatedDistance, targetDistance, Time.deltaTime * 8f);
         }
 
@@ -253,31 +268,119 @@ namespace FIMSpace.Basics
         }
 
         /// <summary>
-        /// Basic collision check to prevent camera from going through objects
+        /// Swept-sphere collision check to prevent the camera and its near plane from crossing walls.
+        /// The camera moves inward immediately, then restores its normal distance smoothly.
         /// </summary>
         private void RaycastCalculations()
         {
-            Vector3 followPoint = ToFollow.transform.position + FollowingOffset + transform.TransformVector(FollowingOffsetDirection);
-            Quaternion cameraDir = Quaternion.Euler(targetSphericRotation.y, targetSphericRotation.x, 0f);
-            Ray directionRay = new Ray(followPoint, cameraDir * -Vector3.forward);
+            Vector3 directionalOffset = transform.TransformVector(FollowingOffsetDirection);
+            Vector3 followPoint = targetPosition + directionalOffset;
+            Vector3 desiredPosition = followPoint + transform.rotation * -Vector3.forward * animatedDistance;
 
-            // If there is something in sight ray way
-            if (Physics.Raycast(directionRay, out sightObstacleHit, targetDistance + CollisionOffset, SightLayerMask, QueryTriggerInteraction.Ignore))
+            if (MinimumHeightAboveFollowPoint > 0f)
+                desiredPosition.y = Mathf.Max(desiredPosition.y, targetPosition.y + MinimumHeightAboveFollowPoint);
+
+            Vector3 toDesired = desiredPosition - followPoint;
+            float desiredDistance = toDesired.magnitude;
+            if (desiredDistance <= 0.0001f)
             {
-                transform.position = sightObstacleHit.point - directionRay.direction * CollisionOffset;
+                transform.position = followPoint;
+                collisionDistance = 0f;
+                collisionDistanceVelocity = 0f;
+                collisionDistanceInitialized = true;
+                return;
+            }
+
+            Vector3 direction = toDesired / desiredDistance;
+            float safeDistance = desiredDistance;
+            bool blocked = false;
+            float radius = Mathf.Max(0.05f, CollisionRadius);
+
+            if (SightLayerMask.value != 0)
+            {
+                if (Physics.CheckSphere(followPoint, radius, SightLayerMask, QueryTriggerInteraction.Ignore))
+                {
+                    safeDistance = 0f;
+                    blocked = true;
+                    sightObstacleHit = default;
+                }
+                else if (Physics.SphereCast(
+                    followPoint,
+                    radius,
+                    direction,
+                    out sightObstacleHit,
+                    desiredDistance,
+                    SightLayerMask,
+                    QueryTriggerInteraction.Ignore))
+                {
+                    safeDistance = Mathf.Max(0f, sightObstacleHit.distance - CollisionOffset);
+                    blocked = true;
+                }
+                else
+                {
+                    sightObstacleHit = default;
+                }
+            }
+
+            if (!collisionDistanceInitialized)
+            {
+                collisionDistance = desiredDistance;
+                collisionDistanceInitialized = true;
+            }
+
+            float targetCollisionDistance = blocked ? safeDistance : desiredDistance;
+            if (targetCollisionDistance <= collisionDistance)
+            {
+                // Never ease through a wall: shortening the arm is immediate.
+                collisionDistance = targetCollisionDistance;
+                collisionDistanceVelocity = 0f;
+            }
+            else if (CollisionReleaseSmoothTime <= 0f)
+            {
+                collisionDistance = targetCollisionDistance;
+                collisionDistanceVelocity = 0f;
             }
             else
             {
-                Vector3 rotationOffset = transform.rotation * -Vector3.forward * animatedDistance;
-                transform.position = targetPosition + rotationOffset + transform.TransformVector(FollowingOffsetDirection);
+                collisionDistance = Mathf.SmoothDamp(
+                    collisionDistance,
+                    targetCollisionDistance,
+                    ref collisionDistanceVelocity,
+                    CollisionReleaseSmoothTime,
+                    Mathf.Infinity,
+                    Time.deltaTime);
             }
 
-            if (MinimumHeightAboveFollowPoint > 0f)
+            collisionDistance = Mathf.Clamp(collisionDistance, 0f, desiredDistance);
+            Vector3 resolvedPosition = followPoint + direction * collisionDistance;
+
+            // Covers starting-overlap and very thin-corner cases missed by a single sweep.
+            if (SightLayerMask.value != 0 &&
+                Physics.CheckSphere(resolvedPosition, radius, SightLayerMask, QueryTriggerInteraction.Ignore))
             {
-                Vector3 protectedPosition = transform.position;
-                protectedPosition.y = Mathf.Max(protectedPosition.y, targetPosition.y + MinimumHeightAboveFollowPoint);
-                transform.position = protectedPosition;
+                float step = Mathf.Max(0.05f, Mathf.Max(CollisionOffset, radius * 0.5f));
+                float fallbackDistance = collisionDistance;
+                for (int i = 0; i < 8; i++)
+                {
+                    fallbackDistance = Mathf.Max(0f, fallbackDistance - step);
+                    resolvedPosition = followPoint + direction * fallbackDistance;
+                    if (!Physics.CheckSphere(resolvedPosition, radius, SightLayerMask, QueryTriggerInteraction.Ignore))
+                    {
+                        collisionDistance = fallbackDistance;
+                        collisionDistanceVelocity = 0f;
+                        break;
+                    }
+                }
+
+                if (Physics.CheckSphere(resolvedPosition, radius, SightLayerMask, QueryTriggerInteraction.Ignore))
+                {
+                    collisionDistance = 0f;
+                    collisionDistanceVelocity = 0f;
+                    resolvedPosition = followPoint;
+                }
             }
+
+            transform.position = resolvedPosition;
         }
 
         /// <summary>

@@ -11,7 +11,7 @@ GameObject:
   - component: {fileID: 1031017234}
   - component: {fileID: 1031017235}
   - component: {fileID: 5738788786489844508}
-  m_Layer: 0
+  m_Layer: 8
   m_Name: SM_Office_wall01c
   m_TagString: Untagged
   m_Icon: {fileID: 0}

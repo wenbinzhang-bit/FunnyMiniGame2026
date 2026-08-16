@@ -25,6 +25,13 @@ namespace Brawl
         [Header("Camera Height Protection")]
         [Min(0f)] public float MinimumHeightAboveFollowPoint = 0.1f;
 
+        [Header("Camera Collision")]
+        [Tooltip("Only walls, columns and large fixed structures should use this layer.")]
+        public string CameraCollisionLayerName = "CameraBlocker";
+        [Min(0.05f)] public float CameraCollisionRadius = 0.3f;
+        [Min(0f)] public float CameraCollisionWallPadding = 0.15f;
+        [Min(0f)] public float CameraCollisionReleaseSmoothTime = 0.25f;
+
         [Header("Vertical Follow")]
         [Min(0f)] public float VerticalFollowSmoothTime = 0.18f;
         [Min(0f)] public float VerticalFollowDeadZone = 0.15f;
@@ -70,6 +77,11 @@ namespace Brawl
             tpp.MinimumHeightAboveFollowPoint = MinimumHeightAboveFollowPoint;
             tpp.VerticalFollowSmoothTime = VerticalFollowSmoothTime;
             tpp.VerticalFollowDeadZone = VerticalFollowDeadZone;
+            int collisionLayer = LayerMask.NameToLayer(CameraCollisionLayerName);
+            tpp.SightLayerMask = collisionLayer >= 0 ? 1 << collisionLayer : 0;
+            tpp.CollisionRadius = CameraCollisionRadius;
+            tpp.CollisionOffset = CameraCollisionWallPadding;
+            tpp.CollisionReleaseSmoothTime = CameraCollisionReleaseSmoothTime;
             tpp.LockCursor = false;
             tpp.RightClickToLockCursor = false;
             tpp.HandleCursorHotkeys = false;

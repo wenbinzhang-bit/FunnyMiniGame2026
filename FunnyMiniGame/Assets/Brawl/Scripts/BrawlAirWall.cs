@@ -10,6 +10,8 @@ namespace Brawl
     [DisallowMultipleComponent]
     public sealed class BrawlAirWall : MonoBehaviour
     {
+        const string CameraBlockerLayerName = "CameraBlocker";
+
         public static BrawlAirWall Instance { get; private set; }
 
         [Header("场景墙体（可直接选中拖动）")]
@@ -86,6 +88,9 @@ namespace Brawl
             GameObject slab = GameObject.CreatePrimitive(PrimitiveType.Cube);
             slab.name = name;
             slab.transform.SetParent(parent, false);
+            int cameraBlockerLayer = LayerMask.NameToLayer(CameraBlockerLayerName);
+            if (cameraBlockerLayer >= 0)
+                slab.layer = cameraBlockerLayer;
             var rend = slab.GetComponent<Renderer>();
             if (rend != null)
             {
@@ -130,6 +135,7 @@ namespace Brawl
                 gameObject.SetActive(true);
 
             BindChildren();
+            ApplyCameraBlockerLayer();
             for (int i = 0; i < transform.childCount; i++)
             {
                 Transform child = transform.GetChild(i);
@@ -210,6 +216,8 @@ namespace Brawl
         {
             Instance = this;
             BindChildren();
+            if (Application.isPlaying)
+                ApplyCameraBlockerLayer();
         }
 
         void OnDisable()
@@ -251,6 +259,24 @@ namespace Brawl
             if (WallEast == null) WallEast = transform.Find("Wall_E");
             if (WallWest == null) WallWest = transform.Find("Wall_W");
             if (WallCeiling == null) WallCeiling = transform.Find("Wall_Ceiling");
+        }
+
+        void ApplyCameraBlockerLayer()
+        {
+            int layer = LayerMask.NameToLayer(CameraBlockerLayerName);
+            if (layer < 0) return;
+
+            SetChildLayer(WallNorth, layer);
+            SetChildLayer(WallSouth, layer);
+            SetChildLayer(WallEast, layer);
+            SetChildLayer(WallWest, layer);
+            SetChildLayer(WallCeiling, layer);
+        }
+
+        static void SetChildLayer(Transform wall, int layer)
+        {
+            if (wall != null)
+                wall.gameObject.layer = layer;
         }
 
         void GetInnerBox(out Vector3 center, out Vector3 half)
