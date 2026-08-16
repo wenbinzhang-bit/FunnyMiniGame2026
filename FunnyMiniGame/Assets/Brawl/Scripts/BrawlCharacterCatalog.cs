@@ -197,6 +197,45 @@ namespace Brawl
         }
 
 #if UNITY_EDITOR
+        void OnValidate()
+        {
+            if (UnityEditor.AssetDatabase.GetAssetPath(this) != EditorAssetPath)
+                return;
+            UnityEditor.EditorApplication.delayCall -= EditorSyncToResourcesCatalog;
+            UnityEditor.EditorApplication.delayCall += EditorSyncToResourcesCatalog;
+        }
+
+        static void EditorSyncToResourcesCatalog()
+        {
+            BrawlCharacterCatalog source = UnityEditor.AssetDatabase.LoadAssetAtPath<BrawlCharacterCatalog>(EditorAssetPath);
+            BrawlCharacterCatalog dest = UnityEditor.AssetDatabase.LoadAssetAtPath<BrawlCharacterCatalog>(ResourcesAssetPath);
+            if (source == null || dest == null || source == dest)
+                return;
+            dest.CopyEntriesFrom(source);
+            UnityEditor.EditorUtility.SetDirty(dest);
+        }
+
+        public void CopyEntriesFrom(BrawlCharacterCatalog source)
+        {
+            if (source == null || source == this)
+                return;
+
+            IReadOnlyList<CharacterEntry> sourceEntries = source.Characters;
+            characters = new CharacterEntry[sourceEntries.Count];
+            characterPrefabs = new GameObject[sourceEntries.Count];
+            for (int i = 0; i < sourceEntries.Count; i++)
+            {
+                CharacterEntry entry = sourceEntries[i];
+                characters[i] = new CharacterEntry
+                {
+                    prefab = entry != null ? entry.prefab : null,
+                    displayName = entry != null ? entry.displayName : "",
+                    avatar = entry != null ? entry.avatar : null
+                };
+                characterPrefabs[i] = characters[i].prefab;
+            }
+        }
+
         public void EditorSetPrefabs(GameObject[] prefabs)
         {
             prefabs = prefabs ?? Array.Empty<GameObject>();

@@ -306,20 +306,7 @@ namespace Brawl.EditorTools
                 return;
 
             BrawlCharacterCatalog resourcesCatalog = LoadOrCreateCatalog(ResourcesCatalogPath);
-            var prefabs = new GameObject[source.CharacterPrefabs.Count];
-            for (int i = 0; i < source.CharacterPrefabs.Count; i++)
-                prefabs[i] = source.CharacterPrefabs[i];
-            resourcesCatalog.EditorSetPrefabs(prefabs);
-
-            var sourceEntries = source.Characters;
-            var destEntries = resourcesCatalog.Characters;
-            int count = Mathf.Min(sourceEntries.Count, destEntries.Count);
-            for (int i = 0; i < count; i++)
-            {
-                if (destEntries[i] != null && sourceEntries[i] != null)
-                    destEntries[i].avatar = sourceEntries[i].avatar;
-            }
-
+            resourcesCatalog.CopyEntriesFrom(source);
             EditorUtility.SetDirty(resourcesCatalog);
         }
 

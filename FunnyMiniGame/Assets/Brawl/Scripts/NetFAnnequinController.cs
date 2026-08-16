@@ -2326,7 +2326,7 @@ namespace Brawl
                 head = Mecanim.GetBoneTransform(HumanBodyBones.Head);
 
             Vector3 origin = head != null ? head.position : transform.position + Vector3.up * 1.55f;
-            holdPosition = origin + Vector3.up * 0.12f;
+            holdPosition = origin + Vector3.up * 0.24f;
             holdRotation = Quaternion.Euler(180f, transform.eulerAngles.y, 0f);
         }
 
