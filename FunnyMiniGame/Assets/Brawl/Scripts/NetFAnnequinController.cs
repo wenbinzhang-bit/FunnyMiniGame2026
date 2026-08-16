@@ -621,15 +621,16 @@ namespace Brawl
                 && syncTurboRemaining > 0.0001f && next <= 0.0001f;
             if (!Mathf.Approximately(syncTurboRemaining, next))
                 syncTurboRemaining = next;
-            if (exhaustedNow)
-                RpcPlayTurboExhausted();
+            if (exhaustedNow && connectionToClient != null)
+                TargetPlayTurboExhausted();
 
             ApplyServerMovementSpeed();
         }
 
-        [ClientRpc]
-        void RpcPlayTurboExhausted()
+        [TargetRpc]
+        void TargetPlayTurboExhausted()
         {
+            if (!isLocalPlayer) return;
             PlayTurboExhaustedAudio();
         }
 
@@ -644,11 +645,9 @@ namespace Brawl
                 turboExhaustedSource = gameObject.AddComponent<AudioSource>();
                 turboExhaustedSource.playOnAwake = false;
                 turboExhaustedSource.loop = false;
-                turboExhaustedSource.spatialBlend = 1f;
+                // 体力耗尽属于本地 UI 反馈，只让操作者自己以 2D 声音听到。
+                turboExhaustedSource.spatialBlend = 0f;
                 turboExhaustedSource.dopplerLevel = 0f;
-                turboExhaustedSource.minDistance = 1f;
-                turboExhaustedSource.maxDistance = 14f;
-                turboExhaustedSource.rolloffMode = AudioRolloffMode.Logarithmic;
             }
 
             turboExhaustedSource.Stop();
@@ -1325,6 +1324,7 @@ namespace Brawl
                 Mecanim.SetBool("Grounded", true);
                 Mecanim.SetBool("Moving", false);
             }
+            RestoreComputerPoseAfterGetUp();
             if (wasDown)
             {
                 if (!wasPhysicalRagdoll)
@@ -1399,6 +1399,23 @@ namespace Brawl
                     else PlayMatchedGetUp(clip);
                 }
             }
+
+            if (!down && string.IsNullOrEmpty(clip))
+                RestoreComputerPoseAfterGetUp();
+        }
+
+        void RestoreComputerPoseAfterGetUp()
+        {
+            if (syncHoldingComputer)
+            {
+                ApplyComputerHoldingPose(true);
+                return;
+            }
+
+            // RA2 从 Falling 回到 Standing 时可能恢复倒地前缓存的 Animator Layer 状态。
+            // 电脑已经掉落时再次归零 Base/Upper Body，避免起身后残留 Holding（打字）姿势。
+            FinishComputerPickupAnimation();
+            ApplyComputerHoldingPose(false);
         }
 
         void BeginVisualFall(bool faceDown)
