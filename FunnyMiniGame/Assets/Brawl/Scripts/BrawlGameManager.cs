@@ -7,7 +7,7 @@ using UnityEngine.SceneManagement;
 namespace Brawl
 {
     /// <summary>
-    /// 跨关卡对局：Launcher 大厅全员准备后进入 MiniGame_00 → MiniGame_01，共 2 关；
+    /// 跨关卡对局：Launcher 大厅由房主点开始进入 MiniGame_00 → MiniGame_01，共 2 关；
     /// 每关先显示规则，再空气墙等待其他玩家进场景，倒计时结束才开打。
     /// 玩法由场景里的 BrawlLevelInfo.PlayMode 决定，第 2 关结束后汇总整场 KPI。
     /// </summary>
@@ -315,7 +315,7 @@ namespace Brawl
             Record.EnsureSeat(conn.connectionId, -1, BrawlHudNames.Label(motor.NetId, PlayersForHud()));
             motor.InputActive = state == EState.Lobby || state == EState.Waiting || state == EState.Playing;
             if (state == EState.Lobby && motor is NetFAnnequinController fan)
-                BrawlLobbyReady.ApplyForLobby(fan, false);
+                BrawlLobbyReady.ApplyForLobby(fan, IsListenHostConnection(conn));
         }
 
         [Server]
@@ -570,10 +570,10 @@ namespace Brawl
                 if (p?.motor != null)
                     p.motor.InputActive = true;
                 if (p?.motor is NetFAnnequinController fan)
-                    BrawlLobbyReady.ApplyForLobby(fan, !IsHumanPlayer(p));
+                    BrawlLobbyReady.ApplyForLobby(fan, !IsHumanPlayer(p) || IsListenHostPlayer(p));
             }
             RefreshLobbyReadyStatus();
-            Debug.Log("BRAWL_SMOKE: LOBBY_STARTED wait_for_all_ready");
+            Debug.Log("BRAWL_SMOKE: LOBBY_STARTED wait_for_host_start");
         }
 
         [Server]
@@ -586,20 +586,15 @@ namespace Brawl
                 if (p?.motor != null)
                     p.motor.InputActive = true;
                 if (p?.motor is NetFAnnequinController fan)
-                    BrawlLobbyReady.KeepBotReady(fan, !IsHumanPlayer(p));
+                    BrawlLobbyReady.KeepBotReady(fan, !IsHumanPlayer(p) || IsListenHostPlayer(p));
             }
 
             BrawlLobbyReady.Tally tally = TallyLobbyReady();
             lobbyReadyLine = tally.Line;
             lobbyAllReady = tally.CanEnterFirstLevel(MinPlayersToStart);
-            if (lobbyAllReady)
-            {
-                statusText = $"{lobbyReadyLine}    全员已准备，正在进入第一关";
-                ServerLoadFirstLevel();
-                return;
-            }
-
-            statusText = $"{lobbyReadyLine}    全员准备后进入第一关";
+            statusText = lobbyAllReady
+                ? $"{lobbyReadyLine}    全员已准备，等待房主开始"
+                : $"{lobbyReadyLine}    等待玩家准备，房主可随时开始";
         }
 
         [Server]
@@ -844,35 +839,38 @@ namespace Brawl
                 ServerAdvanceAfterRound();
         }
 
-        public void RequestLobbyStart()
+        public void RequestLobbyStart(bool force = false)
         {
-            if (!HudShowLobbyActions) return;
-
-            NetFAnnequinController local = LocalLobbyPlayer();
-            if (local != null)
-                local.CmdSetLobbyReady(true);
+            if (!HudShowLobbyActions || !HudIsHost) return;
 
             if (NetworkServer.active)
             {
-                ServerTryStartFromLobby();
+                ServerTryStartFromLobby(force);
                 return;
             }
 
+            NetFAnnequinController local = LocalLobbyPlayer();
             if (local != null)
-                local.CmdRequestLobbyStart();
+                local.CmdRequestLobbyStart(force);
         }
 
         [Server]
-        public void ServerTryStartFromLobby()
+        public void ServerTryStartFromLobby(bool force = false)
         {
             if (state != EState.Lobby || changingScene) return;
             ServerRebuildPlayers();
             BrawlLobbyReady.Tally tally = TallyLobbyReady();
             lobbyReadyLine = tally.Line;
             lobbyAllReady = tally.CanEnterFirstLevel(MinPlayersToStart);
-            if (!lobbyAllReady)
+            if (tally.Humans < MinPlayersToStart || tally.Total <= 0)
             {
-                statusText = $"{lobbyReadyLine}    需全员准备后才能进入第一关";
+                statusText = $"{lobbyReadyLine}    人数不足，无法开始";
+                return;
+            }
+
+            if (!force && !lobbyAllReady)
+            {
+                statusText = $"{lobbyReadyLine}    还有人未准备";
                 return;
             }
 
@@ -881,7 +879,7 @@ namespace Brawl
 
         public void RequestLobbyReadyToggle()
         {
-            if (!HudShowLobbyActions) return;
+            if (!HudShowLobbyActions || HudIsHost) return;
             NetFAnnequinController local = LocalLobbyPlayer();
             if (local == null) return;
             local.CmdSetLobbyReady(!local.LobbyReady);
@@ -1655,7 +1653,23 @@ namespace Brawl
             BrawlLobbyReady.Tally tally = TallyLobbyReady();
             lobbyReadyLine = tally.Line;
             lobbyAllReady = tally.CanEnterFirstLevel(MinPlayersToStart);
-            statusText = $"{lobbyReadyLine}    全员准备后进入第一关";
+            statusText = lobbyAllReady
+                ? $"{lobbyReadyLine}    全员已准备，等待房主开始"
+                : $"{lobbyReadyLine}    等待玩家准备，房主可随时开始";
+        }
+
+        static bool IsListenHostConnection(NetworkConnectionToClient conn)
+        {
+            return conn != null && NetworkServer.localConnection == conn;
+        }
+
+        static bool IsListenHostPlayer(PlayerEntry player)
+        {
+            if (IsListenHostConnection(player?.conn))
+                return true;
+            return player?.motor is NetFAnnequinController fan
+                && fan.connectionToClient != null
+                && fan.connectionToClient == NetworkServer.localConnection;
         }
 
         BrawlLobbyReady.Tally TallyLobbyReady()
@@ -1669,7 +1683,7 @@ namespace Brawl
                 if (conn?.identity == null) continue;
                 NetFAnnequinController fan = conn.identity.GetComponent<NetFAnnequinController>();
                 if (fan == null || !counted.Add(fan)) continue;
-                tally.Add(true, false, fan.LobbyReady);
+                tally.Add(true, false, fan.LobbyReady || IsListenHostConnection(conn));
             }
 
             foreach (var p in players)

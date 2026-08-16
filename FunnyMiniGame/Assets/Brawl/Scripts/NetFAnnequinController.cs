@@ -843,16 +843,22 @@ namespace Brawl
             BrawlGameManager gm = BrawlGameManager.Instance;
             if (gm == null || !gm.ServerCanAcceptLobbyReady())
                 return;
+            if (connectionToClient != null && connectionToClient == NetworkServer.localConnection)
+            {
+                LobbyReady = true;
+                return;
+            }
+
             LobbyReady = ready;
-            if (ready)
-                gm.ServerTryStartFromLobby();
         }
 
         [Command]
-        public void CmdRequestLobbyStart()
+        public void CmdRequestLobbyStart(bool force)
         {
+            if (connectionToClient == null || connectionToClient != NetworkServer.localConnection)
+                return;
             if (BrawlGameManager.Instance != null)
-                BrawlGameManager.Instance.ServerTryStartFromLobby();
+                BrawlGameManager.Instance.ServerTryStartFromLobby(force);
         }
 
         [Command]

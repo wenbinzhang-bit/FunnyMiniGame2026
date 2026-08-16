@@ -5,15 +5,15 @@ namespace Brawl
     /// </summary>
     public static class BrawlLobbyReady
     {
-        public static void ApplyForLobby(NetFAnnequinController fan, bool isBot)
+        public static void ApplyForLobby(NetFAnnequinController fan, bool autoReady)
         {
             if (fan == null) return;
-            fan.LobbyReady = isBot;
+            fan.LobbyReady = autoReady;
         }
 
-        public static void KeepBotReady(NetFAnnequinController fan, bool isBot)
+        public static void KeepBotReady(NetFAnnequinController fan, bool autoReady)
         {
-            if (isBot && fan != null)
+            if (autoReady && fan != null)
                 fan.LobbyReady = true;
         }
 

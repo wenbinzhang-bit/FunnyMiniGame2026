@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Brawl;
 using FIMSpace.RagdollAnimatorDemo;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -19,8 +20,17 @@ namespace Brawl.EditorTools
         const string TestScenePath = "Assets/FImpossible Creations/Plugins - Animating/Ragdoll Animator 2/Ragdoll Animator 2 - Demo/TestScene.unity";
         const string ControllerPath = "Assets/Brawl/Animations/AC_BrawlLaptop.overrideController";
         const string OutputFolder = "Assets/Brawl/Prefabs/Characters";
-        const string CatalogPath = OutputFolder + "/BrawlCharacterCatalog.asset";
+        const string CatalogPath = BrawlCharacterCatalog.EditorAssetPath;
+        const string ResourcesCatalogPath = BrawlCharacterCatalog.ResourcesAssetPath;
         const string PunchSwingHitPath = "Assets/Brawl/Audio/qunima.mp3";
+
+        static readonly string[] DefaultAvatarPaths =
+        {
+            "Assets/Brawl/Resources/UI/PlayerAvatars/Player01_RedDress.png",
+            "Assets/Brawl/Resources/UI/PlayerAvatars/Player02_WhiteShirtTie.png",
+            "Assets/Brawl/Resources/UI/PlayerAvatars/Player03_GreenPlaid.png",
+            "Assets/Brawl/Resources/UI/PlayerAvatars/Player04_StripedHeavy.png"
+        };
 
         static readonly CharacterDefinition[] Characters =
         {
@@ -258,15 +268,59 @@ namespace Brawl.EditorTools
 
         static void BuildCatalog(GameObject[] prefabs)
         {
-            BrawlCharacterCatalog catalog = AssetDatabase.LoadAssetAtPath<BrawlCharacterCatalog>(CatalogPath);
+            BrawlCharacterCatalog catalog = LoadOrCreateCatalog(CatalogPath);
+            catalog.EditorSetPrefabs(prefabs);
+            AssignDefaultAvatarsIfMissing(catalog);
+            EditorUtility.SetDirty(catalog);
+            SyncResourcesCatalog(catalog);
+        }
+
+        static BrawlCharacterCatalog LoadOrCreateCatalog(string path)
+        {
+            BrawlCharacterCatalog catalog = AssetDatabase.LoadAssetAtPath<BrawlCharacterCatalog>(path);
+            if (catalog != null)
+                return catalog;
+
+            catalog = ScriptableObject.CreateInstance<BrawlCharacterCatalog>();
+            AssetDatabase.CreateAsset(catalog, path);
+            return catalog;
+        }
+
+        static void AssignDefaultAvatarsIfMissing(BrawlCharacterCatalog catalog)
+        {
             if (catalog == null)
+                return;
+
+            var entries = catalog.Characters;
+            for (int i = 0; i < entries.Count && i < DefaultAvatarPaths.Length; i++)
             {
-                catalog = ScriptableObject.CreateInstance<BrawlCharacterCatalog>();
-                AssetDatabase.CreateAsset(catalog, CatalogPath);
+                if (entries[i] == null || entries[i].avatar != null)
+                    continue;
+                entries[i].avatar = AssetDatabase.LoadAssetAtPath<Sprite>(DefaultAvatarPaths[i]);
+            }
+        }
+
+        static void SyncResourcesCatalog(BrawlCharacterCatalog source)
+        {
+            if (source == null)
+                return;
+
+            BrawlCharacterCatalog resourcesCatalog = LoadOrCreateCatalog(ResourcesCatalogPath);
+            var prefabs = new GameObject[source.CharacterPrefabs.Count];
+            for (int i = 0; i < source.CharacterPrefabs.Count; i++)
+                prefabs[i] = source.CharacterPrefabs[i];
+            resourcesCatalog.EditorSetPrefabs(prefabs);
+
+            var sourceEntries = source.Characters;
+            var destEntries = resourcesCatalog.Characters;
+            int count = Mathf.Min(sourceEntries.Count, destEntries.Count);
+            for (int i = 0; i < count; i++)
+            {
+                if (destEntries[i] != null && sourceEntries[i] != null)
+                    destEntries[i].avatar = sourceEntries[i].avatar;
             }
 
-            catalog.EditorSetPrefabs(prefabs);
-            EditorUtility.SetDirty(catalog);
+            EditorUtility.SetDirty(resourcesCatalog);
         }
 
         [MenuItem("Brawl/Validate Four Demo Character Prefabs")]
@@ -313,6 +367,8 @@ namespace Brawl.EditorTools
             BrawlCharacterCatalog catalog = AssetDatabase.LoadAssetAtPath<BrawlCharacterCatalog>(CatalogPath);
             if (catalog == null || catalog.CharacterPrefabs.Count != Characters.Length || catalog.CharacterPrefabs.Any(prefab => prefab == null))
                 throw new InvalidOperationException("BrawlCharacterCatalog 必须包含四个有效角色 Prefab。");
+            if (catalog.Characters.Any(entry => entry == null || entry.avatar == null))
+                throw new InvalidOperationException("BrawlCharacterCatalog 必须为每个角色配置头像。");
 
             Debug.Log("BRAWL_CHARACTER_VALIDATE: SUCCESS - 4 prefabs, humanoid avatars, animator, punch relay and catch bones are valid.");
         }
