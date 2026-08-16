@@ -90,6 +90,7 @@ namespace Brawl
         [SyncVar(hook = nameof(OnSyncVanished))] bool syncVanished;
         [SyncVar] float syncTurboRemaining = 5f;
         [SyncVar] public bool LobbyReady;
+        [SyncVar] int syncCharacterIndex = -1;
 
         public bool InputActive { get; set; } = true;
         public Vector3 SpawnPosition { get; set; }
@@ -98,6 +99,7 @@ namespace Brawl
         public Transform Transform => this != null ? transform : null;
         public PlayerAttributes Attributes => attributes;
         public bool IsDead => syncEliminated;
+        public int CharacterIndex => syncCharacterIndex;
         public bool WantsToMove => pendingMove.sqrMagnitude > 0.0001f;
         public bool IsMoveAuthority => Mover != null && Mover.Rigb != null && !Mover.Rigb.isKinematic && (isServer || isLocalPlayer);
         bool UsesServerPoseSync => poseSync != null && poseSync.enabled;
@@ -163,6 +165,7 @@ namespace Brawl
         Coroutine explodeVanishRoutine;
         static AudioClip generatedExplosionClip;
         static AudioClip generatedClangClip;
+        static AudioClip generatedScreamClip;
         float knockbackUntil;
         RigidbodyConstraints standingConstraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
         float lastPlayerPunchTime = -1f;
@@ -289,6 +292,19 @@ namespace Brawl
             ConfigureNetworkSync();
             DisableLocalDemoInput();
             ServerIgnoreComputerCollisions();
+            ServerAssignCharacterIndex(null);
+        }
+
+        [Server]
+        public void ServerAssignCharacterIndex(GameObject prefab)
+        {
+            BrawlCharacterCatalog catalog = BrawlCharacterCatalog.Load();
+            if (catalog == null) return;
+            int index = catalog.IndexOfPrefab(prefab);
+            if (index < 0)
+                index = catalog.ResolveIndex(transform, -1);
+            if (index >= 0)
+                syncCharacterIndex = index;
         }
 
         public override void OnStartClient()
@@ -2387,6 +2403,58 @@ namespace Brawl
         void RpcBuckExplode(Vector3 origin)
         {
             PlayBuckExplosion(origin);
+            PlayBlastScream();
+        }
+
+        void PlayBlastScream()
+        {
+            if (HitVoiceClip == null)
+                HitVoiceClip = Resources.Load<AudioClip>("Audio/HitVoice_Ah");
+            if (hitVoiceSource == null)
+                hitVoiceSource = Hero != null && Hero.HitAudio != null ? Hero.HitAudio : GetComponent<AudioSource>();
+            if (hitVoiceSource == null)
+            {
+                hitVoiceSource = gameObject.AddComponent<AudioSource>();
+                hitVoiceSource.playOnAwake = false;
+                hitVoiceSource.spatialBlend = 1f;
+                hitVoiceSource.minDistance = 1.5f;
+                hitVoiceSource.maxDistance = 22f;
+            }
+
+            if (HitVoiceClip != null)
+            {
+                hitVoiceSource.pitch = Random.Range(0.68f, 0.82f);
+                hitVoiceSource.PlayOneShot(HitVoiceClip, 1f);
+            }
+
+            if (generatedScreamClip == null)
+                generatedScreamClip = CreateBlastScreamClip();
+            hitVoiceSource.PlayOneShot(generatedScreamClip, 0.75f);
+        }
+
+        static AudioClip CreateBlastScreamClip()
+        {
+            const int sampleRate = 22050;
+            const float duration = 0.72f;
+            int samples = Mathf.RoundToInt(sampleRate * duration);
+            var data = new float[samples];
+            var rng = new System.Random(13);
+            for (int i = 0; i < samples; i++)
+            {
+                float t = i / (float)sampleRate;
+                float n = t / duration;
+                float env = Mathf.Sin(Mathf.PI * Mathf.Clamp01(n * 1.15f)) * Mathf.Exp(-n * 1.4f);
+                float freq = Mathf.Lerp(780f, 280f, n);
+                float vibrato = 1f + 0.035f * Mathf.Sin(2f * Mathf.PI * 18f * t);
+                float yell = Mathf.Sin(2f * Mathf.PI * freq * vibrato * t)
+                    + 0.35f * Mathf.Sin(2f * Mathf.PI * freq * 2.02f * t);
+                float noise = (float)(rng.NextDouble() * 2.0 - 1.0) * 0.18f;
+                data[i] = Mathf.Clamp((yell + noise) * env * 0.55f, -1f, 1f);
+            }
+
+            var clip = AudioClip.Create("BlastScream", samples, 1, sampleRate, false);
+            clip.SetData(data, 0);
+            return clip;
         }
 
         [ClientRpc]

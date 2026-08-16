@@ -14,12 +14,16 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   characters:
   - prefab: {fileID: 7673178447298958435, guid: 1afd68cb29939c94a8c9de372382d21e, type: 3}
+    displayName: 
     avatar: {fileID: 21300000, guid: d1e87f7e6ed1499aad4e19b2d5b33ab1, type: 3}
   - prefab: {fileID: 6083023806183275983, guid: ea1b6742864682449b0d36a7ab47ecc1, type: 3}
+    displayName: 
     avatar: {fileID: 21300000, guid: 70cc87c721fb480e9b4d6937eb0610ce, type: 3}
   - prefab: {fileID: 2109131740610896258, guid: f0d209dc8f5daea4abd653c30628ea05, type: 3}
+    displayName: 
     avatar: {fileID: 21300000, guid: f2a0ca4bc8264d25ae63c81496161f1d, type: 3}
   - prefab: {fileID: 2092579621248134895, guid: e33e0de468b21ce478295d95c957f099, type: 3}
+    displayName: 
     avatar: {fileID: 21300000, guid: 88dcb84a2822430495ce4a37751a91a0, type: 3}
   characterPrefabs:
   - {fileID: 7673178447298958435, guid: 1afd68cb29939c94a8c9de372382d21e, type: 3}

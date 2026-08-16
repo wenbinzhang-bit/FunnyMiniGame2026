@@ -370,6 +370,9 @@ namespace Brawl
             player.name = $"{prefab.name} [player={playerIndex} conn={conn.connectionId}]";
             BrawlSession.AdoptActor(player);
             NetworkServer.AddPlayerForConnection(conn, player);
+            var spawnedPlayer = player.GetComponent<NetFAnnequinController>();
+            if (spawnedPlayer != null)
+                spawnedPlayer.ServerAssignCharacterIndex(prefab);
 
             Debug.Log($"BRAWL: 第{playerIndex + 1}个玩家 -> {prefab.name}");
             if (BrawlGameManager.Instance != null)
@@ -465,6 +468,7 @@ namespace Brawl
                 return false;
             }
 
+            fan.ServerAssignCharacterIndex(prefab);
             fan.InputActive = true;
             if (bot.GetComponent<BrawlBotBrain>() == null)
                 bot.AddComponent<BrawlBotBrain>();
