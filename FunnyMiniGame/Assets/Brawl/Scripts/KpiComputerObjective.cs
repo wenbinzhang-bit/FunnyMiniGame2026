@@ -66,6 +66,7 @@ namespace Brawl
         {
             ResolveBody();
             ResolvePickupRenderers();
+            BrawlPotMesh.ApplyTo(this);
             spawnPosition = transform.position;
             spawnRotation = transform.rotation;
             hasSpawnPose = true;
@@ -80,6 +81,7 @@ namespace Brawl
         {
             ResolveBody();
             ResolvePickupRenderers();
+            BrawlPotMesh.ApplyTo(this);
             ApplyPickupPulse(!IsHeld);
             SetTypingLoop(IsHeld);
             if (isServer || Body == null) return;
@@ -231,6 +233,9 @@ namespace Brawl
 
         void LateUpdate()
         {
+            if (BrawlGameManager.PassTheBuckActive && transform.Find("PotVisual") == null)
+                BrawlPotMesh.ApplyTo(this);
+
             if (!IsHeld) return;
 
             // NetworkTransformReliable 必须始终保持启用。运行中禁用/启用会重置其增量压缩状态，
