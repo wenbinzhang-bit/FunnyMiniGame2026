@@ -25,10 +25,18 @@ namespace Brawl
         [Tooltip("使用拾取物闪烁材质的 Renderer；为空时会自动查找子物体")]
         public Renderer[] PickupRenderers;
 
+        [Header("Held Typing Audio")]
+        [Tooltip("持有电脑时循环播放；为空时从 Resources/Audio/ComputerTypingLoop 加载")]
+        public AudioClip TypingLoopClip;
+        [Range(0f, 1f)] public float TypingLoopVolume = 0.55f;
+        [Min(0f)] public float TypingMinDistance = 1.5f;
+        [Min(0.1f)] public float TypingMaxDistance = 14f;
+
         [SyncVar(hook = nameof(OnHolderNetIdChanged))] uint holderNetId;
 
         NetFAnnequinController serverHolder;
         MaterialPropertyBlock pickupPropertyBlock;
+        AudioSource typingLoopSource;
         Vector3 spawnPosition;
         Quaternion spawnRotation;
         bool hasSpawnPose;
@@ -57,6 +65,7 @@ namespace Brawl
             ResolveBody();
             ResolvePickupRenderers();
             ApplyPickupPulse(!IsHeld);
+            SetTypingLoop(IsHeld);
             if (isServer || Body == null) return;
 
             // 电脑物理由服务端模拟，纯客户端只回放 NetworkTransform。
@@ -65,9 +74,52 @@ namespace Brawl
             Body.detectCollisions = false;
         }
 
+        public override void OnStopClient()
+        {
+            SetTypingLoop(false);
+            base.OnStopClient();
+        }
+
         void OnHolderNetIdChanged(uint previousHolderNetId, uint newHolderNetId)
         {
             ApplyPickupPulse(newHolderNetId == 0u);
+            if (isClient)
+                SetTypingLoop(newHolderNetId != 0u);
+        }
+
+        void SetTypingLoop(bool held)
+        {
+            if (!held)
+            {
+                if (typingLoopSource != null && typingLoopSource.isPlaying)
+                    typingLoopSource.Stop();
+                return;
+            }
+
+            EnsureTypingLoopSource();
+            if (typingLoopSource == null || TypingLoopClip == null || typingLoopSource.isPlaying)
+                return;
+
+            typingLoopSource.clip = TypingLoopClip;
+            typingLoopSource.Play();
+        }
+
+        void EnsureTypingLoopSource()
+        {
+            if (TypingLoopClip == null)
+                TypingLoopClip = Resources.Load<AudioClip>("Audio/ComputerTypingLoop");
+
+            if (typingLoopSource == null)
+                typingLoopSource = gameObject.AddComponent<AudioSource>();
+
+            typingLoopSource.playOnAwake = false;
+            typingLoopSource.loop = true;
+            typingLoopSource.volume = TypingLoopVolume;
+            typingLoopSource.spatialBlend = 1f;
+            typingLoopSource.dopplerLevel = 0f;
+            typingLoopSource.minDistance = Mathf.Max(0f, TypingMinDistance);
+            typingLoopSource.maxDistance = Mathf.Max(typingLoopSource.minDistance + 0.1f, TypingMaxDistance);
+            typingLoopSource.rolloffMode = AudioRolloffMode.Logarithmic;
         }
 
         void LateUpdate()
