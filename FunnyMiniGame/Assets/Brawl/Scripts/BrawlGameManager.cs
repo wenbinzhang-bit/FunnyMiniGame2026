@@ -14,6 +14,7 @@ namespace Brawl
     public class BrawlGameManager : NetworkBehaviour
     {
         const float RulesIntroDurationSeconds = 10f;
+        const float RoundResultDurationSeconds = 15f;
 
         public static BrawlGameManager Instance { get; private set; }
 
@@ -23,11 +24,11 @@ namespace Brawl
         [Tooltip("兼容旧场景字段，本玩法不再把玩家送去观战岛")]
         public Vector3 SpectatorIsland = new Vector3(60f, 3f, 60f);
 
-        [Tooltip("回合结束后选择下一局的倒计时，超时未点则结束对局")]
-        [Min(1f)] public float ContinueDecisionSeconds = 30f;
+        [Tooltip("回合结算页自动进入下一关的倒计时；当前流程固定为 15 秒")]
+        [Min(1f)] public float ContinueDecisionSeconds = RoundResultDurationSeconds;
 
         [Tooltip("兼容旧字段，结算等待改用 ContinueDecisionSeconds")]
-        public float RoundRestartDelay = 30f;
+        public float RoundRestartDelay = RoundResultDurationSeconds;
 
         [Tooltip("一回合倒计时秒数")]
         [Min(5f)] public float RoundDurationSeconds = 60f;
@@ -82,7 +83,13 @@ namespace Brawl
         public string HudRulesBody => rulesBody;
         public string HudKpiBoardText => kpiBoardText;
         public bool HudAirWallActive => airWallActive;
-        public bool HudContinueRequested => nextRoundRequested;
+        public bool HudContinueRequested => HudLocalRoundContinueReady();
+        public int HudRoundContinueReadyCount => roundContinueReadyCount;
+        public int HudRoundContinueHumanCount => roundContinueHumanCount;
+        public float HudRoundResultDuration => RoundResultDurationSeconds;
+        public float HudRoundResultElapsedSeconds => HudIsRoundEnd
+            ? Mathf.Max(0f, RoundResultDurationSeconds - HudRemainingSeconds)
+            : 0f;
         public bool HudIsHost => NetworkServer.active;
         public BrawlPlayMode HudPlayMode => playMode;
         public bool IsPassTheBuck => playMode == BrawlPlayMode.PassTheBuck;
@@ -153,6 +160,43 @@ namespace Brawl
             }
         }
 
+        public bool HudLocalRoundContinueReady()
+        {
+            NetFAnnequinController local = LocalLobbyPlayer();
+            return local != null && ContainsSyncedNetId(roundContinueReadyNetIds, local.NetId);
+        }
+
+        public int HudRoundTotalKpi(uint netId, int fallback)
+        {
+            if (netId == 0u || string.IsNullOrEmpty(roundResultSnapshot))
+                return Mathf.Max(0, fallback);
+
+            string[] entries = roundResultSnapshot.Split(';');
+            for (int i = 0; i < entries.Length; i++)
+            {
+                string[] parts = entries[i].Split(':');
+                if (parts.Length != 3) continue;
+                if (!uint.TryParse(parts[0], out uint entryNetId) || entryNetId != netId) continue;
+                return int.TryParse(parts[2], out int total) ? Mathf.Max(0, total) : Mathf.Max(0, fallback);
+            }
+
+            return Mathf.Max(0, fallback);
+        }
+
+        static bool ContainsSyncedNetId(string encoded, uint netId)
+        {
+            if (netId == 0u || string.IsNullOrEmpty(encoded)) return false;
+            string target = netId.ToString();
+            string[] values = encoded.Split(',');
+            for (int i = 0; i < values.Length; i++)
+            {
+                if (values[i] == target)
+                    return true;
+            }
+
+            return false;
+        }
+
         bool IsHudState(EState want)
         {
             if (state != want || changingScene) return false;
@@ -172,6 +216,10 @@ namespace Brawl
         [SyncVar] double continueEndsAt;
         [SyncVar] double lobbyEndsAt;
         [SyncVar] bool nextRoundRequested;
+        [SyncVar] string roundContinueReadyNetIds = "";
+        [SyncVar] int roundContinueReadyCount;
+        [SyncVar] int roundContinueHumanCount;
+        [SyncVar] string roundResultSnapshot = "";
         [SyncVar(hook = nameof(OnAirWallActiveChanged))] bool airWallActive = true;
         [SyncVar] string rankText = "";
         [SyncVar] string currentLevelName = "";
@@ -202,6 +250,7 @@ namespace Brawl
         }
 
         readonly List<PlayerEntry> players = new List<PlayerEntry>();
+        readonly HashSet<uint> roundContinueReadyIds = new HashSet<uint>();
         int nextBotIndex;
         double nextScoreTime;
         bool stoppingSession;
@@ -213,6 +262,9 @@ namespace Brawl
         {
             // 旧 Prefab 和脚本热重载会保留曾经的 3 秒序列化值，规则页现统一固定为 10 秒。
             RulesDurationSeconds = RulesIntroDurationSeconds;
+            // 结算倒计时由服务器统一固定，避免旧 Prefab 上残留的 30 秒覆盖新流程。
+            ContinueDecisionSeconds = RoundResultDurationSeconds;
+            RoundRestartDelay = RoundResultDurationSeconds;
             if (Instance != null && Instance != this)
                 return;
             Instance = this;
@@ -299,6 +351,8 @@ namespace Brawl
         {
             if (conn == null) return;
             players.RemoveAll(p => p.conn == conn);
+            if (state == EState.RoundEnd)
+                ServerRefreshRoundContinueStatus();
         }
 
         void Update()
@@ -426,6 +480,11 @@ namespace Brawl
         void ServerClearRoundRuntime(string message)
         {
             nextRoundRequested = false;
+            roundContinueReadyIds.Clear();
+            roundContinueReadyNetIds = "";
+            roundContinueReadyCount = 0;
+            roundContinueHumanCount = 0;
+            roundResultSnapshot = "";
             stoppingSession = false;
             roundEndsAt = 0;
             waitingEndsAt = 0;
@@ -774,9 +833,11 @@ namespace Brawl
             if (continueEndsAt <= 0)
                 continueEndsAt = NetworkTime.time + ResolveContinueSeconds();
 
+            ServerRefreshRoundContinueStatus();
+
             float remain = Mathf.Max(0f, (float)(continueEndsAt - NetworkTime.time));
             string action = HudHasNextLevel ? "下一关" : "查看总成绩";
-            statusText = $"点击「{action}」继续，否则 {FormatTime(remain)} 后自动继续";
+            statusText = $"已确认 {roundContinueReadyCount}/{roundContinueHumanCount}，点击「{action}」继续，否则 {FormatTime(remain)} 后自动继续";
             if (remain <= 0f)
                 ServerAdvanceAfterRound();
         }
@@ -851,6 +912,23 @@ namespace Brawl
             return null;
         }
 
+        [Server]
+        void ServerRefreshRoundContinueStatus()
+        {
+            ServerRebuildPlayers();
+            var activeHumans = new HashSet<uint>();
+            foreach (PlayerEntry player in players)
+            {
+                if (!IsHumanPlayer(player) || !IsLiveMotor(player.motor)) continue;
+                activeHumans.Add(player.motor.NetId);
+            }
+
+            roundContinueReadyIds.RemoveWhere(id => !activeHumans.Contains(id));
+            roundContinueHumanCount = activeHumans.Count;
+            roundContinueReadyCount = roundContinueReadyIds.Count;
+            roundContinueReadyNetIds = string.Join(",", roundContinueReadyIds.OrderBy(id => id));
+        }
+
         public void DebugSetRemainingSeconds(float seconds)
         {
             seconds = Mathf.Max(0.1f, seconds);
@@ -882,7 +960,7 @@ namespace Brawl
 
             if (NetworkServer.active)
             {
-                ServerOnNextRoundRequested();
+                ServerOnNextRoundRequested(LocalLobbyPlayer());
                 return;
             }
 
@@ -893,7 +971,7 @@ namespace Brawl
                 local.CmdRequestNextRound();
         }
 
-        public void ServerOnNextRoundRequested()
+        public void ServerOnNextRoundRequested(NetFAnnequinController requester)
         {
             if (!NetworkServer.active || stoppingSession) return;
             RecoverStuckSceneChange();
@@ -904,10 +982,37 @@ namespace Brawl
                 return;
             }
 
-            nextRoundRequested = true;
-            statusText = HudHasNextLevel ? "已确认下一关" : "已确认查看总成绩";
-            Debug.Log("BRAWL_SMOKE: NEXT_ROUND_REQUESTED");
-            ServerAdvanceAfterRound();
+            if (state == EState.FinalKpi)
+            {
+                nextRoundRequested = true;
+                ServerAdvanceAfterRound();
+                return;
+            }
+
+            if (requester == null)
+            {
+                Debug.LogWarning("BrawlGameManager: 下一关确认缺少请求玩家");
+                return;
+            }
+
+            PlayerEntry entry = FindPlayer(requester.NetId);
+            if (!IsHumanPlayer(entry))
+            {
+                Debug.LogWarning($"BrawlGameManager: 忽略非真人玩家的下一关确认 netId={requester.NetId}");
+                return;
+            }
+
+            roundContinueReadyIds.Add(requester.NetId);
+            ServerRefreshRoundContinueStatus();
+            string action = HudHasNextLevel ? "下一关" : "查看总成绩";
+            statusText = $"已确认 {roundContinueReadyCount}/{roundContinueHumanCount}，等待全员进入{action}";
+            Debug.Log($"BRAWL_SMOKE: NEXT_ROUND_READY netId={requester.NetId} ready={roundContinueReadyCount}/{roundContinueHumanCount}");
+
+            if (roundContinueHumanCount > 0 && roundContinueReadyCount >= roundContinueHumanCount)
+            {
+                nextRoundRequested = true;
+                statusText = $"全员已确认，正在进入{action}";
+            }
         }
 
         void ServerAdvanceAfterRound()
@@ -952,9 +1057,7 @@ namespace Brawl
 
         float ResolveContinueSeconds()
         {
-            if (ContinueDecisionSeconds >= 1f) return ContinueDecisionSeconds;
-            if (RoundRestartDelay >= 1f) return RoundRestartDelay;
-            return 30f;
+            return RoundResultDurationSeconds;
         }
 
         [Server]
@@ -1234,6 +1337,8 @@ namespace Brawl
             state = EState.RoundEnd;
             roundEndsAt = 0;
             nextRoundRequested = false;
+            roundContinueReadyIds.Clear();
+            ServerRefreshRoundContinueStatus();
             continueEndsAt = NetworkTime.time + ResolveContinueSeconds();
 
             foreach (var p in players)
@@ -1243,6 +1348,7 @@ namespace Brawl
 
             ServerDropAllComputers();
             ServerRecordLevelScores();
+            ServerBuildRoundResultSnapshot();
             rankText = RankLine();
             kpiBoardText = FormatKpiBoard();
 
@@ -1705,6 +1811,21 @@ namespace Brawl
             }
 
             Record.CommitLevel(currentLevelName);
+        }
+
+        [Server]
+        void ServerBuildRoundResultSnapshot()
+        {
+            var entries = new List<string>();
+            foreach (PlayerEntry player in players)
+            {
+                if (player?.motor == null) continue;
+                BrawlRunRecord.Seat seat = Record.FindSeat(player.connectionId, player.botIndex);
+                int total = seat != null ? seat.Total : player.motor.Score;
+                entries.Add($"{player.motor.NetId}:{Mathf.Max(0, player.motor.Score)}:{Mathf.Max(0, total)}");
+            }
+
+            roundResultSnapshot = string.Join(";", entries);
         }
 
         string FormatKpiBoard()
