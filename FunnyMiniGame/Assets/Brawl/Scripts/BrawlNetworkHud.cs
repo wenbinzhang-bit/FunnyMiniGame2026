@@ -131,7 +131,7 @@ namespace Brawl
             }
             else
             {
-                BindHeader("未连接", IdleDot, "同一局域网会自动列出房间，点一项即可加入");
+                BindHeader("未连接", IdleDot, "同网段会自动列出；跨网段请填主机 IP 后刷新或加入");
                 EnsureBrowsing();
                 RefreshServerList();
             }
@@ -197,6 +197,7 @@ namespace Brawl
         {
             if (manager == null || addressField == null) return;
             manager.networkAddress = addressField.text.Trim();
+            RememberJoinAddress(manager.networkAddress);
             if (discovery != null)
                 discovery.StopDiscovery();
             manager.StartClient();
@@ -205,6 +206,7 @@ namespace Brawl
         void OnJoinFound(BrawlFoundServer server)
         {
             if (manager == null || server == null) return;
+            RememberJoinAddress(server.Address);
             if (discovery != null)
                 discovery.StopDiscovery();
             if (server.Uri != null)
@@ -223,6 +225,7 @@ namespace Brawl
         {
             discovery = BrawlServerDiscovery.Ensure(manager);
             if (discovery == null) return;
+            RememberJoinAddress(CurrentJoinAddress());
             discovery.ClearFound();
             lastListFingerprint = null;
             if (discovery.IsSearching)
@@ -260,7 +263,22 @@ namespace Brawl
             if (discovery == null) return;
             if (nameField != null && !nameField.isFocused && string.IsNullOrWhiteSpace(nameField.text))
                 nameField.text = BrawlServerDiscovery.DefaultServerName();
+            RememberJoinAddress(CurrentJoinAddress());
             discovery.BeginBrowse();
+        }
+
+        string CurrentJoinAddress()
+        {
+            if (addressField != null && !string.IsNullOrWhiteSpace(addressField.text))
+                return addressField.text.Trim();
+            return manager != null ? manager.networkAddress : "";
+        }
+
+        void RememberJoinAddress(string address)
+        {
+            discovery = discovery != null ? discovery : BrawlServerDiscovery.Ensure(manager);
+            if (discovery != null)
+                discovery.AddUnicastTarget(address);
         }
 
         void RefreshServerList()
@@ -396,7 +414,7 @@ namespace Brawl
             hintText = CreateText(panel, "Hint", 14, FontStyle.Normal, TextAnchor.UpperLeft, HintColor);
             SetRect(hintText.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f),
                 new Vector2(16f, -42f), new Vector2(-32f, 36f));
-            hintText.text = "同一局域网会自动列出房间，点一项即可加入";
+            hintText.text = "同网段会自动列出；跨网段请填主机 IP 后刷新或加入";
             hintText.horizontalOverflow = HorizontalWrapMode.Wrap;
             hintText.verticalOverflow = VerticalWrapMode.Overflow;
 
@@ -466,7 +484,7 @@ namespace Brawl
 
             emptyListText = CreateText(listRoot, "Empty", 14, FontStyle.Normal, TextAnchor.MiddleCenter, HintColor);
             Stretch(emptyListText.rectTransform);
-            emptyListText.text = "正在搜索局域网房间…";
+            emptyListText.text = "正在搜索房间…";
 
             RectTransform joinRow = CreateRect(disconnectedRoot.transform, "JoinRow", new Vector2(0f, 1f), new Vector2(1f, 1f),
                 new Vector2(0.5f, 1f), new Vector2(0f, -354f), new Vector2(-32f, 36f));
