@@ -16,6 +16,9 @@ namespace Brawl
     {
         const int ScoreBarMaxFallback = 99;
         const string Level01RulesArtworkResource = "UI/Rules/Level01Briefing";
+        const string ResultPaperResource = "UI/Results/ResumePaper";
+        const float ResultRevealInterval = 0.65f;
+        const float ResultRevealDuration = 0.28f;
 
         static readonly Color[] SlotBarColors =
         {
@@ -42,6 +45,21 @@ namespace Brawl
             public Image BarFill;
             public Image Frame;
             public Image Avatar;
+        }
+
+        sealed class RoundResultCard
+        {
+            public GameObject Root;
+            public CanvasGroup Canvas;
+            public GameObject Content;
+            public Text Name;
+            public Text Rank;
+            public Text Score;
+            public Text Performance;
+            public Text TotalKpi;
+            public Text Comment;
+            public Image Avatar;
+            public Image Stamp;
         }
 
         [Header("Top")]
@@ -116,6 +134,13 @@ namespace Brawl
         string lobbyTransientStatus;
         float lobbyTransientStatusUntil;
         Image rulesCountdownBackdrop;
+        GameObject roundResultRoot;
+        Text roundResultTitle;
+        Text roundResultCountdown;
+        Text roundResultReadyStatus;
+        readonly RoundResultCard[] roundResultCards = new RoundResultCard[4];
+        Sprite resultPaperSprite;
+        readonly Dictionary<BrawlRoundResultRules.Grade, Sprite> resultStampSprites = new Dictionary<BrawlRoundResultRules.Grade, Sprite>();
 
         void Awake()
         {
@@ -140,6 +165,7 @@ namespace Brawl
             EnsureTurboVisuals();
             EnsureCursorHint();
             EnsureNextRoundButton();
+            EnsureRoundResultPanel();
             EnsureLobbyButton();
             EnsureLobbyReadyPanel();
             EnsureRulesPanel();
@@ -183,8 +209,9 @@ namespace Brawl
             bool online = NetworkClient.active || NetworkServer.active;
             BrawlGameManager gm = BrawlGameManager.Instance;
             bool showRules = online && gm != null && gm.HudIsShowingRules;
+            bool showRoundResult = online && gm != null && gm.HudIsRoundEnd;
             if (ControlsText != null)
-                ControlsText.gameObject.SetActive(online && !showRules);
+                ControlsText.gameObject.SetActive(online && !showRules && !showRoundResult);
             if (!online) return;
             ResetHudIfSceneChanged();
             Refresh();
@@ -221,6 +248,8 @@ namespace Brawl
                 LobbyStartButton.gameObject.SetActive(false);
             if (RulesRoot != null)
                 RulesRoot.SetActive(false);
+            if (roundResultRoot != null)
+                roundResultRoot.SetActive(false);
             HideForeignMatchHuds();
         }
 
@@ -269,7 +298,7 @@ namespace Brawl
             bool launcherLobby = gm != null && gm.HudIsLobby && BrawlLevelCatalog.ActiveSceneIsLauncher();
             if (StatusText != null)
             {
-                StatusText.gameObject.SetActive(!launcherLobby);
+                StatusText.gameObject.SetActive(!launcherLobby && (gm == null || !gm.HudIsRoundEnd));
                 if (gm != null && gm.HudIsLobby)
                     StatusText.text = string.IsNullOrEmpty(gm.HudStatusText)
                         ? "大厅等待加入，全员准备后进入第一关"
@@ -298,13 +327,14 @@ namespace Brawl
 
             BindLocalTurbo();
             BindRanking(gm);
+            BindRoundResultPanel(gm);
             BindNextRoundButton(gm);
             BindLobbyButton(gm);
             BindRulesPanel(gm);
             BindDebugTimerButton(gm);
             BindCursorHint();
-            if (NextRoundButton != null && NextRoundButton.gameObject.activeSelf)
-                NextRoundButton.transform.SetAsLastSibling();
+            if (roundResultRoot != null && roundResultRoot.activeSelf)
+                roundResultRoot.transform.SetAsLastSibling();
         }
 
         void BindSlot(PlayerSlot slot, int index, IBrawlPlayer player, int scoreMax)
@@ -438,6 +468,245 @@ namespace Brawl
             }
         }
 
+        void EnsureRoundResultPanel()
+        {
+            if (roundResultRoot != null && roundResultCards[0] != null) return;
+
+            Transform stale = transform.Find("RoundResult");
+            if (stale != null)
+            {
+                if (Application.isPlaying) Destroy(stale.gameObject);
+                else DestroyImmediate(stale.gameObject);
+            }
+            if (NextRoundButton == null || NextRoundLabel == null)
+                EnsureNextRoundButton();
+
+            Font fallbackFont = TimerText != null && TimerText.font != null
+                ? TimerText.font
+                : Resources.GetBuiltinResource<Font>("Arial.ttf");
+            resultPaperSprite = Resources.Load<Sprite>(ResultPaperResource);
+
+            GameObject rootObject = new GameObject("RoundResult", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            RectTransform root = rootObject.GetComponent<RectTransform>();
+            root.SetParent(transform, false);
+            SetHudRect(root, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            Image backdrop = rootObject.GetComponent<Image>();
+            backdrop.color = new Color(0.012f, 0.016f, 0.022f, 0.985f);
+            backdrop.raycastTarget = true;
+            roundResultRoot = rootObject;
+
+            CreateResultPanelImage(root, "InnerFrame", new Vector2(0.008f, 0.012f), new Vector2(0.992f, 0.988f), new Color(0.36f, 0.34f, 0.28f, 0.82f));
+            CreateResultPanelImage(root, "InnerFill", new Vector2(0.011f, 0.016f), new Vector2(0.989f, 0.984f), new Color(0.018f, 0.024f, 0.032f, 1f));
+            CreateResultPanelImage(root, "TitleBar", new Vector2(0.03f, 0.865f), new Vector2(0.97f, 0.965f), new Color(0.015f, 0.025f, 0.18f, 0.96f));
+            CreateResultPanelImage(root, "TitleTopLine", new Vector2(0.03f, 0.961f), new Vector2(0.97f, 0.967f), new Color(0.72f, 0.66f, 0.48f, 0.92f));
+            CreateResultPanelImage(root, "TitleBottomLine", new Vector2(0.03f, 0.859f), new Vector2(0.97f, 0.865f), new Color(0.72f, 0.66f, 0.48f, 0.92f));
+
+            roundResultTitle = CreateResultText(root, "Title", fallbackFont, 40, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.94f, 0.90f, 0.78f, 1f), true);
+            SetHudRect(roundResultTitle.rectTransform, new Vector2(0.05f, 0.87f), new Vector2(0.95f, 0.96f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            roundResultTitle.text = "第一关：绩效考核";
+
+            float[] left = { 0.035f, 0.272f, 0.509f, 0.746f };
+            const float cardWidth = 0.219f;
+            for (int i = 0; i < roundResultCards.Length; i++)
+                roundResultCards[i] = CreateRoundResultCard(root, fallbackFont, i, left[i], left[i] + cardWidth);
+
+            roundResultReadyStatus = CreateResultText(root, "ReadyStatus", fallbackFont, 16, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.88f, 0.86f, 0.78f, 0.96f), true);
+            SetHudRect(roundResultReadyStatus.rectTransform, new Vector2(0.38f, 0.165f), new Vector2(0.62f, 0.205f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            roundResultReadyStatus.text = "已确认 0/0";
+
+            if (NextRoundButton != null)
+            {
+                RectTransform buttonRect = NextRoundButton.transform as RectTransform;
+                buttonRect.SetParent(root, false);
+                SetHudRect(buttonRect, new Vector2(0.38f, 0.075f), new Vector2(0.62f, 0.155f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+                Image buttonImage = NextRoundButton.GetComponent<Image>();
+                if (buttonImage != null)
+                {
+                    buttonImage.color = new Color(0.88f, 0.63f, 0.03f, 1f);
+                    EnsureGraphicOutline(buttonImage, new Color(0.58f, 0.52f, 0.38f, 1f), 2f);
+                }
+                if (NextRoundLabel != null)
+                {
+                    NextRoundLabel.fontSize = 28;
+                    NextRoundLabel.color = new Color(0.04f, 0.04f, 0.035f, 1f);
+                }
+            }
+
+            roundResultCountdown = CreateResultText(root, "Countdown", fallbackFont, 23, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(1f, 0.82f, 0.20f, 1f), true);
+            SetHudRect(roundResultCountdown.rectTransform, new Vector2(0.30f, 0.015f), new Vector2(0.70f, 0.07f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            roundResultCountdown.text = "15s后自动进入下一关";
+            rootObject.SetActive(false);
+        }
+
+        RoundResultCard CreateRoundResultCard(RectTransform parent, Font font, int index, float minX, float maxX)
+        {
+            var card = new RoundResultCard();
+            GameObject cardObject = new GameObject($"Resume{index + 1}", typeof(RectTransform), typeof(CanvasGroup));
+            RectTransform cardRect = cardObject.GetComponent<RectTransform>();
+            cardRect.SetParent(parent, false);
+            SetHudRect(cardRect, new Vector2(minX, 0.22f), new Vector2(maxX, 0.83f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            card.Root = cardObject;
+            card.Canvas = cardObject.GetComponent<CanvasGroup>();
+            card.Canvas.interactable = false;
+            card.Canvas.blocksRaycasts = false;
+
+            Image paper = CreateResultPanelImage(cardRect, "Paper", Vector2.zero, Vector2.one, Color.white);
+            paper.sprite = resultPaperSprite;
+            paper.preserveAspect = true;
+
+            GameObject contentObject = new GameObject("Content", typeof(RectTransform));
+            RectTransform content = contentObject.GetComponent<RectTransform>();
+            content.SetParent(cardRect, false);
+            SetHudRect(content, new Vector2(0.08f, 0.055f), new Vector2(0.92f, 0.94f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            card.Content = contentObject;
+
+            Text header = CreateResultText(content, "Header", font, 21, FontStyle.Bold, TextAnchor.MiddleCenter, new Color(0.08f, 0.07f, 0.055f, 1f), false);
+            SetHudRect(header.rectTransform, new Vector2(0.20f, 0.91f), new Vector2(0.80f, 0.99f), new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            header.text = "员工简历";
+            CreateResultPanelImage(content, "HeaderLine", new Vector2(0.22f, 0.895f), new Vector2(0.78f, 0.900f), new Color(0.36f, 0.31f, 0.23f, 0.55f));
+
+            card.Avatar = CreateResultPanelImage(content, "Avatar", new Vector2(0.10f, 0.65f), new Vector2(0.46f, 0.88f), Color.white);
+            card.Avatar.preserveAspect = true;
+
+            card.Name = CreateResultText(content, "PlayerName", font, 15, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.12f, 0.10f, 0.07f, 0.94f), false);
+            SetHudRect(card.Name.rectTransform, new Vector2(0.48f, 0.82f), new Vector2(0.92f, 0.89f), new Vector2(0f, 0.5f), Vector2.zero, Vector2.zero);
+            card.Name.horizontalOverflow = HorizontalWrapMode.Overflow;
+
+            card.Rank = CreateResultText(content, "Rank", font, 21, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.08f, 0.07f, 0.055f, 1f), false);
+            SetHudRect(card.Rank.rectTransform, new Vector2(0.48f, 0.70f), new Vector2(0.94f, 0.82f), new Vector2(0f, 0.5f), Vector2.zero, Vector2.zero);
+
+            CreateResultPanelImage(content, "AvatarLine", new Vector2(0.08f, 0.63f), new Vector2(0.92f, 0.636f), new Color(0.38f, 0.33f, 0.25f, 0.42f));
+            card.Score = CreateResultText(content, "Score", font, 19, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.08f, 0.07f, 0.055f, 1f), false);
+            SetHudRect(card.Score.rectTransform, new Vector2(0.08f, 0.565f), new Vector2(0.92f, 0.635f), new Vector2(0f, 0.5f), Vector2.zero, Vector2.zero);
+            card.Performance = CreateResultText(content, "Performance", font, 17, FontStyle.Normal, TextAnchor.MiddleLeft, new Color(0.10f, 0.08f, 0.06f, 0.92f), false);
+            SetHudRect(card.Performance.rectTransform, new Vector2(0.08f, 0.505f), new Vector2(0.92f, 0.57f), new Vector2(0f, 0.5f), Vector2.zero, Vector2.zero);
+
+            card.Stamp = CreateResultPanelImage(content, "Stamp", new Vector2(0.18f, 0.235f), new Vector2(0.82f, 0.51f), Color.white);
+            card.Stamp.preserveAspect = true;
+
+            CreateResultPanelImage(content, "KpiLine", new Vector2(0.08f, 0.218f), new Vector2(0.92f, 0.224f), new Color(0.38f, 0.33f, 0.25f, 0.42f));
+            card.TotalKpi = CreateResultText(content, "TotalKpi", font, 23, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.73f, 0.52f, 0.02f, 1f), false);
+            SetHudRect(card.TotalKpi.rectTransform, new Vector2(0.08f, 0.14f), new Vector2(0.92f, 0.215f), new Vector2(0f, 0.5f), Vector2.zero, Vector2.zero);
+            card.Comment = CreateResultText(content, "Comment", font, 16, FontStyle.Bold, TextAnchor.MiddleLeft, new Color(0.10f, 0.08f, 0.06f, 0.96f), false);
+            SetHudRect(card.Comment.rectTransform, new Vector2(0.08f, 0.065f), new Vector2(0.92f, 0.145f), new Vector2(0f, 0.5f), Vector2.zero, Vector2.zero);
+            CreateResultPanelImage(content, "CommentUnderline", new Vector2(0.08f, 0.055f), new Vector2(0.92f, 0.060f), new Color(0.18f, 0.14f, 0.09f, 0.72f));
+            return card;
+        }
+
+        static Image CreateResultPanelImage(Transform parent, string name, Vector2 anchorMin, Vector2 anchorMax, Color color)
+        {
+            GameObject go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            RectTransform rect = go.GetComponent<RectTransform>();
+            rect.SetParent(parent, false);
+            SetHudRect(rect, anchorMin, anchorMax, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
+            Image image = go.GetComponent<Image>();
+            image.color = color;
+            image.raycastTarget = false;
+            return image;
+        }
+
+        static Text CreateResultText(Transform parent, string name, Font font, int size, FontStyle style, TextAnchor alignment, Color color, bool outline)
+        {
+            GameObject go = new GameObject(name, typeof(RectTransform), typeof(CanvasRenderer), typeof(Text));
+            RectTransform rect = go.GetComponent<RectTransform>();
+            rect.SetParent(parent, false);
+            Text text = go.GetComponent<Text>();
+            text.font = font;
+            text.fontSize = size;
+            text.fontStyle = style;
+            text.alignment = alignment;
+            text.color = color;
+            text.raycastTarget = false;
+            text.horizontalOverflow = HorizontalWrapMode.Wrap;
+            text.verticalOverflow = VerticalWrapMode.Overflow;
+            if (outline)
+            {
+                Outline textOutline = go.AddComponent<Outline>();
+                textOutline.effectColor = new Color(0f, 0f, 0f, 0.82f);
+                textOutline.effectDistance = new Vector2(1f, -1f);
+            }
+            return text;
+        }
+
+        Sprite ResultStampSprite(BrawlRoundResultRules.Grade grade)
+        {
+            if (resultStampSprites.TryGetValue(grade, out Sprite loaded) && loaded != null)
+                return loaded;
+            loaded = Resources.Load<Sprite>(BrawlRoundResultRules.StampResource(grade));
+            resultStampSprites[grade] = loaded;
+            return loaded;
+        }
+
+        void BindRoundResultPanel(BrawlGameManager gm)
+        {
+            bool show = gm != null && gm.HudIsRoundEnd;
+            if (roundResultRoot != null)
+                roundResultRoot.SetActive(show);
+            if (!show || roundResultRoot == null) return;
+
+            roundResultRoot.transform.SetAsLastSibling();
+            if (roundResultTitle != null)
+                roundResultTitle.text = $"{BrawlLevelCatalog.GetLevelTitle(BrawlLevelCatalog.ActiveSceneName())}：绩效考核";
+
+            var ordered = new List<IBrawlPlayer>(hudPlayers);
+            ordered.Sort((a, b) =>
+            {
+                int cmp = b.Score.CompareTo(a.Score);
+                return cmp != 0 ? cmp : a.NetId.CompareTo(b.NetId);
+            });
+            if (ordered.Count > roundResultCards.Length)
+                ordered.RemoveRange(roundResultCards.Length, ordered.Count - roundResultCards.Length);
+
+            EnsurePlayerAvatarSprites();
+            float elapsed = gm.HudRoundResultElapsedSeconds;
+            for (int i = 0; i < roundResultCards.Length; i++)
+            {
+                RoundResultCard card = roundResultCards[i];
+                if (card?.Root == null) continue;
+                bool occupied = i < ordered.Count;
+                if (card.Content != null)
+                    card.Content.SetActive(occupied);
+
+                if (!occupied)
+                {
+                    card.Canvas.alpha = 0.64f;
+                    card.Root.transform.localScale = Vector3.one;
+                    continue;
+                }
+
+                IBrawlPlayer player = ordered[i];
+                BrawlRoundResultRules.Grade grade = BrawlRoundResultRules.ResolveGrade(i, ordered.Count);
+                string playerName = BrawlHudNames.Label(player.NetId, hudPlayers);
+                if (card.Name != null) card.Name.text = playerName;
+                if (card.Rank != null) card.Rank.text = $"本关排名：{i + 1}";
+                if (card.Score != null) card.Score.text = $"本关得分：+{Mathf.Max(0, player.Score)}分";
+                if (card.Performance != null) card.Performance.text = "当季绩效：";
+                if (card.TotalKpi != null) card.TotalKpi.text = $"综合KPI：{gm.HudRoundTotalKpi(player.NetId, player.Score)}分";
+                if (card.Comment != null) card.Comment.text = $"评语：{BrawlRoundResultRules.Comment(grade)}";
+                if (card.Stamp != null) card.Stamp.sprite = ResultStampSprite(grade);
+                if (card.Avatar != null)
+                {
+                    int avatarIndex = ResolvePlayerAvatarIndex(player, i);
+                    card.Avatar.sprite = playerAvatarSprites != null && avatarIndex < playerAvatarSprites.Length
+                        ? playerAvatarSprites[avatarIndex]
+                        : null;
+                    card.Avatar.color = Color.white;
+                }
+
+                float revealStart = i * ResultRevealInterval;
+                float reveal = Mathf.SmoothStep(0f, 1f, Mathf.Clamp01((elapsed - revealStart) / ResultRevealDuration));
+                card.Canvas.alpha = reveal;
+                card.Root.transform.localScale = Vector3.one * Mathf.Lerp(0.86f, 1f, reveal);
+            }
+
+            int seconds = Mathf.Max(0, Mathf.CeilToInt(gm.HudRemainingSeconds));
+            string destination = gm.HudHasNextLevel ? "下一关" : "总成绩";
+            if (roundResultCountdown != null)
+                roundResultCountdown.text = $"{seconds}s后自动进入{destination}";
+            if (roundResultReadyStatus != null)
+                roundResultReadyStatus.text = $"已确认 {gm.HudRoundContinueReadyCount}/{gm.HudRoundContinueHumanCount}";
+        }
+
         void EnsureTurboVisuals()
         {
             if (TurboTitle != null && TurboValue != null && TurboFill != null)
@@ -543,11 +812,17 @@ namespace Brawl
                 NextRoundButton.gameObject.SetActive(show);
             if (!show || NextRoundLabel == null) return;
 
-            NextRoundButton.interactable = true;
-            if (NextRoundButton.transform is RectTransform nextRect)
-                nextRect.anchoredPosition = new Vector2(0f, -240f);
+            bool localReady = gm.HudContinueRequested;
+            NextRoundButton.interactable = !localReady;
+            Image image = NextRoundButton.GetComponent<Image>();
+            if (image != null)
+                image.color = localReady
+                    ? new Color(0.34f, 0.33f, 0.29f, 0.96f)
+                    : new Color(0.88f, 0.63f, 0.03f, 1f);
             NextRoundButton.transform.SetAsLastSibling();
-            NextRoundLabel.text = gm.HudHasNextLevel ? "下一关" : "查看总成绩";
+            NextRoundLabel.text = localReady
+                ? "已确认"
+                : gm.HudHasNextLevel ? "下一关" : "查看总成绩";
         }
 
         void OnNextRoundClicked()
@@ -1583,9 +1858,8 @@ namespace Brawl
 
         void BindRanking(BrawlGameManager gm)
         {
-            bool showRound = gm != null && gm.HudIsRoundEnd;
             bool showFinal = gm != null && gm.HudIsFinalKpi;
-            bool show = showRound || showFinal;
+            bool show = showFinal;
             if (RankingRoot != null)
             {
                 RankingRoot.SetActive(show);
@@ -1599,31 +1873,9 @@ namespace Brawl
 
             Text title = RankingRoot != null ? RankingRoot.transform.Find("Title")?.GetComponent<Text>() : null;
             if (title != null)
-                title.text = showFinal ? "整场 KPI 汇总" : "本局排名";
+                title.text = "整场 KPI 汇总";
 
-            if (showFinal)
-            {
-                RankingBody.text = string.IsNullOrEmpty(gm.HudKpiBoardText) ? "还没有成绩" : gm.HudKpiBoardText;
-                return;
-            }
-
-            var ordered = new List<IBrawlPlayer>(hudPlayers);
-            ordered.Sort((a, b) =>
-            {
-                int cmp = b.Score.CompareTo(a.Score);
-                return cmp != 0 ? cmp : a.NetId.CompareTo(b.NetId);
-            });
-
-            var lines = new List<string>();
-            int rank = 1;
-            for (int i = 0; i < ordered.Count; i++)
-            {
-                if (i > 0 && ordered[i].Score < ordered[i - 1].Score)
-                    rank = i + 1;
-                lines.Add($"第{rank}名    {BrawlHudNames.Label(ordered[i].NetId, hudPlayers)}    {ordered[i].Score}分");
-            }
-
-            RankingBody.text = lines.Count == 0 ? "无人参赛" : string.Join("\n", lines);
+            RankingBody.text = string.IsNullOrEmpty(gm.HudKpiBoardText) ? "还没有成绩" : gm.HudKpiBoardText;
         }
 
         void ApplyPassTheBuckDumpStatusColor(bool dumpPhase)

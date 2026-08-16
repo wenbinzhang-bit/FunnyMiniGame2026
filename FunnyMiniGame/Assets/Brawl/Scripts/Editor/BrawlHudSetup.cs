@@ -156,7 +156,7 @@ namespace Brawl.EditorTools
 
             Text title = CreateText(root, "Title", 28, TextAnchor.MiddleCenter, Color.white, font);
             title.fontStyle = FontStyle.Bold;
-            title.text = "本局排名";
+            title.text = "本关排名";
             SetRect(title.rectTransform, new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, -18f), new Vector2(400f, 40f));
 
             hud.RankingBody = CreateText(root, "Body", 22, TextAnchor.UpperCenter, Color.white, font);

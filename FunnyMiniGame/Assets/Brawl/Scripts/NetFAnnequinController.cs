@@ -834,7 +834,7 @@ namespace Brawl
         public void CmdRequestNextRound()
         {
             if (BrawlGameManager.Instance != null)
-                BrawlGameManager.Instance.ServerOnNextRoundRequested();
+                BrawlGameManager.Instance.ServerOnNextRoundRequested(this);
         }
 
         [Command]
