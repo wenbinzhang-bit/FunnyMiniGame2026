@@ -13,14 +13,63 @@ namespace Brawl
 
         public static int AliveCount { get; private set; }
 
+        [Header("Obstacle Avoidance")]
+        [Min(0.2f)] public float ObstacleProbeDistance = 1.4f;
+        [Min(0.05f)] public float ObstacleProbeRadius = 0.28f;
+        [Range(20f, 70f)] public float AvoidanceAngle = 42f;
+        public LayerMask ObstacleMask = ~0;
+
+        [Header("Stuck Recovery")]
+        [Min(0.2f)] public float StuckCheckSeconds = 0.35f;
+        [Min(0.02f)] public float StuckMoveDistance = 0.18f;
+        [Min(0.2f)] public float RecoverySeconds = 1.1f;
+        [Min(0.1f)] public float RecoveryRetargetSeconds = 0.3f;
+
+        static readonly float[] AvoidanceOffsets = { 0f, 1f, -1f, 2f, -2f };
+
         NetFAnnequinController self;
         float nextThink;
+        readonly RaycastHit[] obstacleHits = new RaycastHit[24];
+
+        Vector3 lastProgressPosition;
+        Vector3 lastRequestedDirection;
+        Vector3 recoveryDirection;
+        Vector3 wallContactNormal;
+        Vector3 arenaCenter;
+        float nextStuckCheck;
+        float recoveryUntil;
+        float nextRecoveryRetarget;
+        float nextArenaCenterRefresh;
+        float wallContactUntil;
+        int preferredRecoverySide;
+        bool hasArenaCenter;
 
         void Awake()
         {
             self = GetComponent<NetFAnnequinController>();
             var mouse = GetComponent<FAnnequinMouseActions>();
             if (mouse != null) mouse.enabled = false;
+
+            lastProgressPosition = transform.position;
+            nextStuckCheck = Time.time + StuckCheckSeconds;
+            preferredRecoverySide = (GetInstanceID() & 1) == 0 ? 1 : -1;
+        }
+
+        void OnCollisionStay(Collision collision)
+        {
+            if (!NetworkServer.active || collision == null || !IsNavigationObstacle(collision.collider)) return;
+
+            Vector3 normal = Vector3.zero;
+            for (int i = 0; i < collision.contactCount; i++)
+            {
+                Vector3 contactNormal = Flat(collision.GetContact(i).normal);
+                if (contactNormal.sqrMagnitude > 0.05f)
+                    normal += contactNormal.normalized;
+            }
+
+            if (normal.sqrMagnitude < 0.05f) return;
+            wallContactNormal = normal.normalized;
+            wallContactUntil = Time.time + 0.25f;
         }
 
         void OnEnable()
@@ -45,19 +94,19 @@ namespace Brawl
         {
             if (!self.InputActive || self.IsDead || self.IsKnockedDown || self.IsGrabbed)
             {
-                self.ServerBotSetMove(Vector3.zero);
+                StopMoving();
                 return;
             }
 
             if (BrawlGameManager.Instance != null && !BrawlGameManager.Instance.HudIsPlaying)
             {
-                self.ServerBotSetMove(Vector3.zero);
+                StopMoving();
                 return;
             }
 
             if (self.IsHoldingComputer)
             {
-                self.ServerBotSetMove(FleeDir(), true);
+                MoveSmart(FleeDir(), true);
                 return;
             }
 
@@ -68,12 +117,12 @@ namespace Brawl
                 if (to.magnitude <= 1.7f)
                 {
                     self.ServerBotFace(to);
-                    self.ServerBotSetMove(Vector3.zero);
+                    StopMoving();
                     self.ServerBotTryPickup();
                 }
                 else
                 {
-                    self.ServerBotSetMove(to.normalized);
+                    MoveSmart(to);
                 }
 
                 return;
@@ -88,19 +137,259 @@ namespace Brawl
                 if (to.magnitude <= 2f)
                 {
                     self.ServerBotFace(to);
-                    self.ServerBotSetMove(Vector3.zero);
+                    StopMoving();
                     self.ServerBotPunch();
                 }
                 else
                 {
-                    self.ServerBotSetMove(to.normalized, to.magnitude > 3f);
+                    MoveSmart(to, to.magnitude > 3f);
                 }
 
                 return;
             }
 
             if (computer != null)
-                self.ServerBotSetMove(Flat(computer.transform.position - self.transform.position).normalized);
+                MoveSmart(computer.transform.position - self.transform.position);
+            else
+                StopMoving();
+        }
+
+        /// <summary>
+        /// 在目标方向上做轻量转向。前方有墙时选更畅通的一侧；位移长时间过小时进入脱困状态。
+        /// 这里刻意不用 NavMesh，避免每个小游戏场景都要额外烘焙导航数据。
+        /// </summary>
+        void MoveSmart(Vector3 desiredDirection, bool sprint = false)
+        {
+            Vector3 desired = Flat(desiredDirection);
+            if (desired.sqrMagnitude < 0.001f)
+            {
+                StopMoving();
+                return;
+            }
+
+            desired.Normalize();
+            bool mustAvoidNow = Time.time < wallContactUntil && wallContactNormal.sqrMagnitude > 0.05f;
+            if (mustAvoidNow)
+            {
+                Vector3 centerDirection = ArenaCenterDirection();
+                desired = desired * 0.2f + wallContactNormal * 1.2f;
+                if (centerDirection.sqrMagnitude > 0.1f)
+                    desired += centerDirection * 0.25f;
+                desired.Normalize();
+            }
+
+            UpdateStuckState(desired);
+
+            Vector3 move;
+            if (mustAvoidNow)
+            {
+                // 已经贴墙时物理接触法线最可靠，立即离墙，不等待“卡住”计时。
+                recoveryUntil = 0f;
+                move = desired;
+            }
+            else if (Time.time < recoveryUntil)
+            {
+                if (Time.time >= nextRecoveryRetarget || IsBlocked(recoveryDirection, ObstacleProbeDistance * 0.7f))
+                {
+                    recoveryDirection = ChooseRecoveryDirection(desired);
+                    nextRecoveryRetarget = Time.time + RecoveryRetargetSeconds;
+                }
+
+                move = recoveryDirection;
+            }
+            else
+            {
+                move = SteerAroundObstacle(desired);
+            }
+
+            lastRequestedDirection = move;
+            self.ServerBotSetMove(move, sprint);
+        }
+
+        void StopMoving()
+        {
+            self.ServerBotSetMove(Vector3.zero);
+            lastRequestedDirection = Vector3.zero;
+            lastProgressPosition = transform.position;
+            nextStuckCheck = Time.time + StuckCheckSeconds;
+            recoveryUntil = 0f;
+        }
+
+        void UpdateStuckState(Vector3 desired)
+        {
+            if (Time.time < nextStuckCheck) return;
+
+            float moved = Flat(transform.position - lastProgressPosition).magnitude;
+            if (lastRequestedDirection.sqrMagnitude > 0.1f && moved < StuckMoveDistance)
+            {
+                preferredRecoverySide = -preferredRecoverySide;
+                recoveryDirection = ChooseRecoveryDirection(desired);
+                recoveryUntil = Time.time + RecoverySeconds;
+                nextRecoveryRetarget = Time.time + RecoveryRetargetSeconds;
+            }
+
+            lastProgressPosition = transform.position;
+            nextStuckCheck = Time.time + StuckCheckSeconds;
+        }
+
+        Vector3 SteerAroundObstacle(Vector3 desired)
+        {
+            if (!IsBlocked(desired, ObstacleProbeDistance)) return desired;
+
+            Vector3 centerDirection = ArenaCenterDirection();
+            Vector3 best = desired;
+            float bestScore = float.MinValue;
+
+            foreach (float offset in AvoidanceOffsets)
+            {
+                float angle = offset * AvoidanceAngle;
+                Vector3 candidate = Quaternion.AngleAxis(angle, Vector3.up) * desired;
+                float clearance = Clearance(candidate, ObstacleProbeDistance * 1.45f);
+                float score = clearance * 2f + Vector3.Dot(candidate, desired) * 0.5f;
+
+                if (centerDirection.sqrMagnitude > 0.1f)
+                    score += Vector3.Dot(candidate, centerDirection) * 0.35f;
+
+                // 左右同样畅通的时候，让不同 Bot 偏向不同侧，避免挤成一团。
+                if (Mathf.Sign(offset) == preferredRecoverySide)
+                    score += 0.06f;
+
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = candidate;
+                }
+            }
+
+            return best.normalized;
+        }
+
+        Vector3 ChooseRecoveryDirection(Vector3 desired)
+        {
+            Vector3 centerDirection = ArenaCenterDirection();
+            Vector3 best = -desired;
+            float bestScore = float.MinValue;
+
+            ScoreRecoveryCandidate(Quaternion.AngleAxis(85f * preferredRecoverySide, Vector3.up) * desired,
+                desired, centerDirection, 0.18f, ref best, ref bestScore);
+            ScoreRecoveryCandidate(Quaternion.AngleAxis(-85f * preferredRecoverySide, Vector3.up) * desired,
+                desired, centerDirection, 0f, ref best, ref bestScore);
+            ScoreRecoveryCandidate(Quaternion.AngleAxis(135f * preferredRecoverySide, Vector3.up) * desired,
+                desired, centerDirection, 0.08f, ref best, ref bestScore);
+            ScoreRecoveryCandidate(-desired, desired, centerDirection, 0f, ref best, ref bestScore);
+
+            if (centerDirection.sqrMagnitude > 0.1f)
+            {
+                ScoreRecoveryCandidate(centerDirection, desired, centerDirection, 0.35f,
+                    ref best, ref bestScore);
+                ScoreRecoveryCandidate(Quaternion.AngleAxis(45f * preferredRecoverySide, Vector3.up) * centerDirection,
+                    desired, centerDirection, 0.2f, ref best, ref bestScore);
+            }
+
+            return best.normalized;
+        }
+
+        void ScoreRecoveryCandidate(Vector3 candidate, Vector3 desired, Vector3 centerDirection,
+            float bonus, ref Vector3 best, ref float bestScore)
+        {
+            candidate = Flat(candidate).normalized;
+            float clearance = Clearance(candidate, ObstacleProbeDistance * 1.8f);
+            float score = clearance * 2f + Vector3.Dot(candidate, desired) * 0.12f + bonus;
+            if (centerDirection.sqrMagnitude > 0.1f)
+                score += Vector3.Dot(candidate, centerDirection) * 0.8f;
+
+            if (score <= bestScore) return;
+            bestScore = score;
+            best = candidate;
+        }
+
+        bool IsBlocked(Vector3 direction, float distance)
+        {
+            return Clearance(direction, distance) < distance * 0.92f;
+        }
+
+        float Clearance(Vector3 direction, float distance)
+        {
+            direction = Flat(direction);
+            if (direction.sqrMagnitude < 0.001f) return 0f;
+            direction.Normalize();
+
+            Vector3 origin = transform.position + Vector3.up * 0.72f;
+            int count = Physics.SphereCastNonAlloc(origin, ObstacleProbeRadius, direction, obstacleHits,
+                distance, EffectiveObstacleMask(), QueryTriggerInteraction.Ignore);
+
+            float nearest = distance;
+            for (int i = 0; i < count; i++)
+            {
+                Collider hitCollider = obstacleHits[i].collider;
+                if (!IsNavigationObstacle(hitCollider)) continue;
+                nearest = Mathf.Min(nearest, obstacleHits[i].distance);
+            }
+
+            return nearest;
+        }
+
+        int EffectiveObstacleMask()
+        {
+            // 旧 Prefab/运行时 AddComponent 在某些 Unity 序列化情况下可能把新 LayerMask 留成 0。
+            return ObstacleMask.value == 0 ? Physics.DefaultRaycastLayers : ObstacleMask.value;
+        }
+
+        bool IsNavigationObstacle(Collider hitCollider)
+        {
+            if (hitCollider == null || hitCollider.isTrigger) return false;
+
+            // 玩家和争夺物不是墙；追击时不能因为目标本身而绕开。
+            if (hitCollider.GetComponentInParent<NetFAnnequinController>() != null) return false;
+            if (hitCollider.GetComponentInParent<KpiComputerObjective>() != null) return false;
+            return true;
+        }
+
+        Vector3 ArenaCenterDirection()
+        {
+            if (Time.time >= nextArenaCenterRefresh)
+                RefreshArenaCenter();
+
+            return hasArenaCenter
+                ? Flat(arenaCenter - transform.position).normalized
+                : Vector3.zero;
+        }
+
+        void RefreshArenaCenter()
+        {
+            nextArenaCenterRefresh = Time.time + 5f;
+
+            BrawlAirWall wall = BrawlAirWall.Instance;
+            if (wall == null)
+                wall = FindObjectOfType<BrawlAirWall>(true);
+            if (wall != null)
+            {
+                arenaCenter = wall.transform.position;
+                hasArenaCenter = true;
+                return;
+            }
+
+            NetworkStartPosition[] starts = FindObjectsOfType<NetworkStartPosition>();
+            if (starts.Length > 0)
+            {
+                Vector3 total = Vector3.zero;
+                foreach (NetworkStartPosition start in starts)
+                    total += start.transform.position;
+
+                arenaCenter = total / starts.Length;
+                hasArenaCenter = true;
+                return;
+            }
+
+            KpiComputerObjective computer = NearestComputer();
+            if (computer != null && !computer.IsHeld)
+            {
+                arenaCenter = computer.transform.position;
+                hasArenaCenter = true;
+                return;
+            }
+
+            hasArenaCenter = false;
         }
 
         Vector3 FleeDir()
