@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 namespace Brawl
 {
@@ -26,10 +27,11 @@ namespace Brawl
 
         void Update()
         {
-            if (!LocalCameraRig.IsCursorCaptured) return;
-
-            if (Input.GetMouseButtonDown(0) && !pickupButtonHeld)
+            bool overUi = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
+            if (Input.GetMouseButtonDown(0) && !pickupButtonHeld && !overUi)
                 OnShortPressAttack?.Invoke();
+
+            if (!LocalCameraRig.IsCursorCaptured) return;
 
             if (Input.GetMouseButtonDown(1))
             {

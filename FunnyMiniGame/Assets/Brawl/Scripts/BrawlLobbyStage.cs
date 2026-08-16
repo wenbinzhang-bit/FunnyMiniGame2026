@@ -26,7 +26,8 @@ namespace Brawl
 
         static void EnsureGround()
         {
-            if (GameObject.Find("LobbyGround") != null) return;
+            if (GameObject.Find("LobbyGround") != null || GameObject.Find("TrainingGround") != null)
+                return;
 
             GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Cube);
             ground.name = "LobbyGround";
