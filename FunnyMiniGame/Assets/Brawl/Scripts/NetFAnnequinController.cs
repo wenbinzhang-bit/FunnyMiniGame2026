@@ -48,6 +48,8 @@ namespace Brawl
         [Min(0.1f)] public float TurboDurationSeconds = 5f;
         [Tooltip("松开 Shift 后从空恢复到满所需的秒数")]
         [Min(0.1f)] public float TurboRechargeSeconds = 5f;
+        [Tooltip("拿着电脑加速跑时，进度条消耗倍率")]
+        [Min(1f)] public float TurboHoldComputerDrainMultiplier = 2f;
 
         [Header("Turbo Exhausted Audio")]
         [Tooltip("Shift Turbo 耗尽时播放；为空时从 Resources/Audio/TurboTired 加载")]
@@ -613,7 +615,12 @@ namespace Brawl
 
             float next = syncTurboRemaining;
             if (sprintHeld && canRun && next > 0f)
-                next = Mathf.Max(0f, next - Mathf.Max(0f, deltaTime));
+            {
+                float drain = Mathf.Max(0f, deltaTime);
+                if (IsHoldingComputer)
+                    drain *= Mathf.Max(1f, TurboHoldComputerDrainMultiplier);
+                next = Mathf.Max(0f, next - drain);
+            }
             else if (!sprintHeld || !InputActive || IsDead || IsKnockedDown || IsGrabbed)
                 next = Mathf.Min(capacity, next + Mathf.Max(0f, deltaTime) * capacity / rechargeSeconds);
 
