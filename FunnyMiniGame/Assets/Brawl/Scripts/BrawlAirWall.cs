@@ -4,7 +4,7 @@ using UnityEngine.SceneManagement;
 namespace Brawl
 {
     /// <summary>
-    /// 场景里的空气墙实体。直接拖父物体或四堵墙调整范围，倒计时结束后由对局管理器关掉。
+    /// 场景里的空气墙实体。默认跟场景摆放走，可拖父物体或四堵墙改范围；倒计时结束后由对局管理器关掉。
     /// </summary>
     [ExecuteAlways]
     [DisallowMultipleComponent]
@@ -19,12 +19,12 @@ namespace Brawl
         public Transform WallWest;
         public Transform WallCeiling;
 
-        [Header("尺寸（改完会重排子物体）")]
-        [Tooltip("内部可活动空间：X 宽、Y 高、Z 深")]
+        [Header("尺寸（仅勾选锁定或点重排时生效）")]
+        [Tooltip("内部可活动空间：X 宽、Y 高、Z 深。只有勾选锁定尺寸，或点「按尺寸重排墙体」才会用到。")]
         public Vector3 InnerSize = new Vector3(12f, 8f, 16f);
         [Min(0.2f)] public float Thickness = 0.6f;
-        [Tooltip("勾选后改尺寸自动重排墙；关掉后可以单独拖每堵墙")]
-        public bool LockWallsToSize = true;
+        [Tooltip("关掉后只认场景里拖好的墙，运行时不会改大小。勾选后改 InnerSize 会自动重排。")]
+        public bool LockWallsToSize;
 
         public static BrawlAirWall Ensure(BrawlGameManager gm)
         {
@@ -70,7 +70,7 @@ namespace Brawl
             var wall = root.AddComponent<BrawlAirWall>();
             wall.InnerSize = new Vector3(12f, 8f, 16f);
             wall.Thickness = 0.6f;
-            wall.LockWallsToSize = true;
+            wall.LockWallsToSize = false;
             wall.WallNorth = CreateSlab(root.transform, "Wall_N");
             wall.WallSouth = CreateSlab(root.transform, "Wall_S");
             wall.WallEast = CreateSlab(root.transform, "Wall_E");
@@ -128,9 +128,6 @@ namespace Brawl
         {
             if (!gameObject.activeSelf)
                 gameObject.SetActive(true);
-
-            if (active && (Mathf.Abs(transform.localScale.x) < 0.99f || Mathf.Abs(transform.localScale.z) < 0.99f))
-                transform.localScale = Vector3.one;
 
             BindChildren();
             for (int i = 0; i < transform.childCount; i++)
@@ -265,10 +262,16 @@ namespace Brawl
                 float maxX = WallEast.position.x - WallEast.lossyScale.x * 0.5f;
                 float minZ = WallSouth.position.z + WallSouth.lossyScale.z * 0.5f;
                 float maxZ = WallNorth.position.z - WallNorth.lossyScale.z * 0.5f;
+                float height = InnerSize.y;
+                if (WallCeiling != null)
+                    height = WallCeiling.position.y - WallCeiling.lossyScale.y * 0.5f - transform.position.y;
+                else if (WallNorth != null)
+                    height = WallNorth.lossyScale.y;
+
                 center = new Vector3((minX + maxX) * 0.5f, transform.position.y, (minZ + maxZ) * 0.5f);
                 half = new Vector3(
                     Mathf.Max(0.5f, (maxX - minX) * 0.5f),
-                    Mathf.Max(1f, InnerSize.y) * 0.5f,
+                    Mathf.Max(1f, height) * 0.5f,
                     Mathf.Max(0.5f, (maxZ - minZ) * 0.5f));
                 return;
             }

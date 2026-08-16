@@ -30,7 +30,6 @@ namespace Brawl.EditorTools
             if (existing != null)
             {
                 BindToGameManager(existing);
-                existing.ApplyLayout();
                 EditorUtility.SetDirty(existing);
                 return existing;
             }
@@ -42,7 +41,7 @@ namespace Brawl.EditorTools
             var wall = root.AddComponent<BrawlAirWall>();
             wall.InnerSize = new Vector3(12f, 8f, 16f);
             wall.Thickness = 0.6f;
-            wall.LockWallsToSize = true;
+            wall.LockWallsToSize = false;
             wall.WallNorth = CreateSlab(root.transform, "Wall_N");
             wall.WallSouth = CreateSlab(root.transform, "Wall_S");
             wall.WallEast = CreateSlab(root.transform, "Wall_E");

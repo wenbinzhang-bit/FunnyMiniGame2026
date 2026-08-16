@@ -9744,7 +9744,7 @@ MonoBehaviour:
   WallCeiling: {fileID: 880001051}
   InnerSize: {x: 12, y: 8, z: 16}
   Thickness: 0.6
-  LockWallsToSize: 1
+  LockWallsToSize: 0
 --- !u!4 &880001002
 Transform:
   m_ObjectHideFlags: 0
