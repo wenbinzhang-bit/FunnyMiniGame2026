@@ -117,6 +117,9 @@ namespace Brawl
         AudioSource beepSource;
         AudioClip beepClip;
         int lastBeepSecond = -1;
+        bool playedFinalKpiReaction;
+        static readonly Dictionary<BrawlRoundResultRules.Grade, AudioClip> resultReactionClips =
+            new Dictionary<BrawlRoundResultRules.Grade, AudioClip>();
         Image timerRing;
         Image timerFill;
         Color timerRingBase;
@@ -715,6 +718,8 @@ namespace Brawl
         {
             bool final = gm != null && gm.HudIsFinalKpi;
             bool show = gm != null && (gm.HudIsRoundEnd || final);
+            if (!final)
+                playedFinalKpiReaction = false;
             if (roundResultRoot != null)
                 roundResultRoot.SetActive(show);
             if (!show || roundResultRoot == null) return;
@@ -798,6 +803,156 @@ namespace Brawl
                     roundResultCountdown.text = $"{seconds}s后自动进入{destination}";
                 }
             }
+
+            TryPlayFinalResultReaction(gm, ordered, final);
+        }
+
+        void TryPlayFinalResultReaction(BrawlGameManager gm, List<IBrawlPlayer> ordered, bool final)
+        {
+            if (!final || playedFinalKpiReaction || gm == null || ordered == null)
+                return;
+
+            NetFAnnequinController local = FindLocalPlayer();
+            if (local == null) return;
+
+            int rank = -1;
+            for (int i = 0; i < ordered.Count; i++)
+            {
+                if (ordered[i] != null && ordered[i].NetId == local.NetId)
+                {
+                    rank = i;
+                    break;
+                }
+            }
+
+            if (rank < 0) return;
+            if (gm.HudRoundResultElapsedSeconds < rank * ResultRevealInterval)
+                return;
+
+            playedFinalKpiReaction = true;
+            PlayResultReaction(BrawlRoundResultRules.ResolveGrade(rank, ordered.Count));
+        }
+
+        void PlayResultReaction(BrawlRoundResultRules.Grade grade)
+        {
+            EnsureBeepSource();
+            if (beepSource == null) return;
+            if (!resultReactionClips.TryGetValue(grade, out AudioClip clip) || clip == null)
+            {
+                clip = CreateResultReactionClip(grade);
+                resultReactionClips[grade] = clip;
+            }
+
+            beepSource.pitch = 1f;
+            beepSource.PlayOneShot(clip, 0.85f);
+        }
+
+        static AudioClip CreateResultReactionClip(BrawlRoundResultRules.Grade grade)
+        {
+            switch (grade)
+            {
+                case BrawlRoundResultRules.Grade.S:
+                    return CreateCheerClip();
+                case BrawlRoundResultRules.Grade.AMinus:
+                    return CreatePraiseClip();
+                case BrawlRoundResultRules.Grade.BPlus:
+                    return CreateEncourageClip();
+                default:
+                    return CreateSympathyClip();
+            }
+        }
+
+        static AudioClip CreateCheerClip()
+        {
+            return ComposeSting("ResultCheer", 1.05f, new[]
+            {
+                new Tone(523.25f, 0.00f, 0.22f, 0.28f),
+                new Tone(659.25f, 0.10f, 0.22f, 0.26f),
+                new Tone(783.99f, 0.20f, 0.24f, 0.26f),
+                new Tone(1046.5f, 0.32f, 0.42f, 0.32f),
+                new Tone(1318.5f, 0.40f, 0.28f, 0.16f)
+            }, crowd: 0.22f, descend: false);
+        }
+
+        static AudioClip CreatePraiseClip()
+        {
+            return ComposeSting("ResultPraise", 0.72f, new[]
+            {
+                new Tone(523.25f, 0.00f, 0.20f, 0.26f),
+                new Tone(659.25f, 0.12f, 0.22f, 0.24f),
+                new Tone(783.99f, 0.24f, 0.32f, 0.28f)
+            }, crowd: 0.10f, descend: false);
+        }
+
+        static AudioClip CreateEncourageClip()
+        {
+            return ComposeSting("ResultEncourage", 0.7f, new[]
+            {
+                new Tone(392.00f, 0.00f, 0.22f, 0.24f),
+                new Tone(523.25f, 0.16f, 0.36f, 0.26f)
+            }, crowd: 0.04f, descend: false);
+        }
+
+        static AudioClip CreateSympathyClip()
+        {
+            return ComposeSting("ResultSympathy", 0.85f, new[]
+            {
+                new Tone(392.00f, 0.00f, 0.24f, 0.24f),
+                new Tone(329.63f, 0.16f, 0.26f, 0.22f),
+                new Tone(246.94f, 0.34f, 0.42f, 0.26f)
+            }, crowd: 0f, descend: true);
+        }
+
+        readonly struct Tone
+        {
+            public readonly float Freq;
+            public readonly float Start;
+            public readonly float Duration;
+            public readonly float Volume;
+
+            public Tone(float freq, float start, float duration, float volume)
+            {
+                Freq = freq;
+                Start = start;
+                Duration = duration;
+                Volume = volume;
+            }
+        }
+
+        static AudioClip ComposeSting(string name, float duration, Tone[] tones, float crowd, bool descend)
+        {
+            const int sampleRate = 22050;
+            int samples = Mathf.RoundToInt(sampleRate * duration);
+            var data = new float[samples];
+            var rng = new System.Random(name.GetHashCode());
+            for (int i = 0; i < samples; i++)
+            {
+                float t = i / (float)sampleRate;
+                float sample = 0f;
+                for (int n = 0; n < tones.Length; n++)
+                {
+                    Tone tone = tones[n];
+                    float local = t - tone.Start;
+                    if (local < 0f || local > tone.Duration) continue;
+                    float env = Mathf.Sin(Mathf.PI * Mathf.Clamp01(local / tone.Duration));
+                    float freq = tone.Freq;
+                    if (descend)
+                        freq *= Mathf.Lerp(1f, 0.82f, local / tone.Duration);
+                    sample += Mathf.Sin(2f * Mathf.PI * freq * t) * env * tone.Volume;
+                }
+
+                if (crowd > 0f)
+                {
+                    float burst = Mathf.Exp(-t * 3.2f);
+                    sample += (float)(rng.NextDouble() * 2.0 - 1.0) * burst * crowd;
+                }
+
+                data[i] = Mathf.Clamp(sample, -1f, 1f);
+            }
+
+            var clip = AudioClip.Create(name, samples, 1, sampleRate, false);
+            clip.SetData(data, 0);
+            return clip;
         }
 
         static int ResultSortScore(BrawlGameManager gm, IBrawlPlayer player, bool final)

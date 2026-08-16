@@ -208,7 +208,7 @@ namespace Brawl
 
                 Vector3 to = Flat(target.transform.position - self.transform.position);
                 self.ServerBotFace(to);
-                if (to.magnitude <= 14f)
+                if (to.magnitude <= NetFAnnequinController.PassBuckMaxDistance)
                 {
                     StopMoving();
                     self.ServerBotPassBuck(target);

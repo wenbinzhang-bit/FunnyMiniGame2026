@@ -107,6 +107,20 @@ namespace Brawl
         public bool IsCatchStunned => isServer && Time.time < catchStunUntil;
         public bool CanThrowComputer => false;
         public const float PassAimViewportX = 0.58f;
+        public const float PassBuckMaxDistance = 3f;
+        static readonly HumanBodyBones[] PassAimBones =
+        {
+            HumanBodyBones.Head, HumanBodyBones.Neck,
+            HumanBodyBones.UpperChest, HumanBodyBones.Chest, HumanBodyBones.Spine, HumanBodyBones.Hips,
+            HumanBodyBones.LeftShoulder, HumanBodyBones.RightShoulder,
+            HumanBodyBones.LeftUpperArm, HumanBodyBones.RightUpperArm,
+            HumanBodyBones.LeftLowerArm, HumanBodyBones.RightLowerArm,
+            HumanBodyBones.LeftHand, HumanBodyBones.RightHand,
+            HumanBodyBones.LeftUpperLeg, HumanBodyBones.RightUpperLeg,
+            HumanBodyBones.LeftLowerLeg, HumanBodyBones.RightLowerLeg,
+            HumanBodyBones.LeftFoot, HumanBodyBones.RightFoot
+        };
+        readonly List<Vector3> passAimPoints = new List<Vector3>(24);
 
         public bool CanPassBuck =>
             BrawlGameManager.PassTheBuckActive
@@ -148,6 +162,7 @@ namespace Brawl
         Coroutine visualFallRoutine;
         Coroutine explodeVanishRoutine;
         static AudioClip generatedExplosionClip;
+        static AudioClip generatedClangClip;
         float knockbackUntil;
         RigidbodyConstraints standingConstraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
         float lastPlayerPunchTime = -1f;
@@ -605,7 +620,7 @@ namespace Brawl
             CmdPassBuck(target.netId);
         }
 
-        public NetFAnnequinController FindAimedPlayer(float maxDistance = 28f)
+        public NetFAnnequinController FindAimedPlayer(float maxDistance = PassBuckMaxDistance)
         {
             Camera cam = Camera.main;
             if (cam == null) return null;
@@ -615,17 +630,8 @@ namespace Brawl
             foreach (NetFAnnequinController other in FindObjectsOfType<NetFAnnequinController>())
             {
                 if (other == null || other == this || other.IsDead) continue;
-                Vector3 aimPoint = other.GetPassAimPoint();
-                Vector3 viewport = cam.WorldToViewportPoint(aimPoint);
-                if (viewport.z < 0.35f) continue;
-
-                float dx = viewport.x - PassAimViewportX;
-                float dy = viewport.y - 0.5f;
-                float screenDist = Mathf.Sqrt(dx * dx + dy * dy);
-                if (screenDist > 0.16f) continue;
-
-                float worldDist = Vector3.Distance(cam.transform.position, aimPoint);
-                if (worldDist > maxDistance) continue;
+                if (!other.TryGetBestPassAim(cam, transform.position, maxDistance, out float screenDist, out float worldDist))
+                    continue;
 
                 float score = screenDist * 10f + worldDist * 0.015f;
                 if (score >= bestScore) continue;
@@ -636,16 +642,71 @@ namespace Brawl
             return best;
         }
 
-        public Vector3 GetPassAimPoint()
+        public bool TryGetBestPassAim(Camera cam, Vector3 from, float maxDistance, out float screenDist, out float worldDist)
         {
-            if (Mecanim != null && Mecanim.isHuman)
+            screenDist = float.MaxValue;
+            worldDist = float.MaxValue;
+            CollectPassAimPoints(passAimPoints);
+            bool anyInRange = false;
+            bool anyOnScreen = false;
+            for (int i = 0; i < passAimPoints.Count; i++)
             {
-                Transform chest = Mecanim.GetBoneTransform(HumanBodyBones.Chest);
-                if (chest == null) chest = Mecanim.GetBoneTransform(HumanBodyBones.Spine);
-                if (chest != null) return chest.position;
+                Vector3 point = passAimPoints[i];
+                float dist = Vector3.Distance(from, point);
+                if (dist > maxDistance) continue;
+                anyInRange = true;
+                if (dist < worldDist) worldDist = dist;
+
+                Vector3 viewport = cam.WorldToViewportPoint(point);
+                if (viewport.z < 0.2f) continue;
+                float dx = viewport.x - PassAimViewportX;
+                float dy = viewport.y - 0.5f;
+                float onScreen = Mathf.Sqrt(dx * dx + dy * dy);
+                if (onScreen > 0.16f) continue;
+                anyOnScreen = true;
+                if (onScreen < screenDist) screenDist = onScreen;
             }
 
-            return transform.position + Vector3.up * 1.15f;
+            return anyInRange && anyOnScreen;
+        }
+
+        public float GetNearestPassAimDistance(Vector3 from)
+        {
+            CollectPassAimPoints(passAimPoints);
+            float best = float.MaxValue;
+            for (int i = 0; i < passAimPoints.Count; i++)
+            {
+                float dist = Vector3.Distance(from, passAimPoints[i]);
+                if (dist < best) best = dist;
+            }
+
+            return best;
+        }
+
+        public Vector3 GetPassAimPoint()
+        {
+            CollectPassAimPoints(passAimPoints);
+            return passAimPoints.Count > 0 ? passAimPoints[0] : transform.position + Vector3.up * 1.15f;
+        }
+
+        void CollectPassAimPoints(List<Vector3> points)
+        {
+            points.Clear();
+            if (Mecanim != null && Mecanim.isHuman)
+            {
+                for (int i = 0; i < PassAimBones.Length; i++)
+                {
+                    Transform bone = Mecanim.GetBoneTransform(PassAimBones[i]);
+                    if (bone != null) points.Add(bone.position);
+                }
+            }
+
+            if (points.Count == 0)
+            {
+                points.Add(transform.position + Vector3.up * 0.35f);
+                points.Add(transform.position + Vector3.up * 0.9f);
+                points.Add(transform.position + Vector3.up * 1.45f);
+            }
         }
 
         bool IsAttackMovementLocked()
@@ -985,6 +1046,8 @@ namespace Brawl
         {
             if (!CanPassBuck || target == null || target == this || target.IsDead) return;
             if (target.IsGrabbed || target.IsHoldingComputer) return;
+            if (target.GetNearestPassAimDistance(transform.position) > PassBuckMaxDistance + 0.15f)
+                return;
             KpiComputerObjective computer = heldComputer;
             if (computer == null) return;
             computer.ServerTransferTo(this, target, true);
@@ -2204,7 +2267,7 @@ namespace Brawl
         {
             if (BrawlGameManager.PassTheBuckActive)
             {
-                GetComputerBackPose(out holdPosition, out holdRotation);
+                GetComputerHeadPose(out holdPosition, out holdRotation);
                 return;
             }
 
@@ -2240,20 +2303,15 @@ namespace Brawl
                 * Quaternion.Euler(ComputerHoldEuler);
         }
 
-        void GetComputerBackPose(out Vector3 holdPosition, out Quaternion holdRotation)
+        void GetComputerHeadPose(out Vector3 holdPosition, out Quaternion holdRotation)
         {
-            Transform spine = null;
+            Transform head = null;
             if (Mecanim != null && Mecanim.isHuman)
-            {
-                spine = Mecanim.GetBoneTransform(HumanBodyBones.UpperChest);
-                if (spine == null) spine = Mecanim.GetBoneTransform(HumanBodyBones.Chest);
-                if (spine == null) spine = Mecanim.GetBoneTransform(HumanBodyBones.Spine);
-            }
+                head = Mecanim.GetBoneTransform(HumanBodyBones.Head);
 
-            Vector3 origin = spine != null ? spine.position : transform.position + Vector3.up * 1.15f;
-            holdPosition = origin - transform.forward * 0.28f;
-            holdRotation = Quaternion.LookRotation(-transform.forward, Vector3.up)
-                * Quaternion.Euler(ComputerHoldEuler);
+            Vector3 origin = head != null ? head.position : transform.position + Vector3.up * 1.55f;
+            holdPosition = origin + Vector3.up * 0.12f;
+            holdRotation = Quaternion.Euler(180f, transform.eulerAngles.y, 0f);
         }
 
         [Server]
@@ -2329,6 +2387,61 @@ namespace Brawl
         void RpcBuckExplode(Vector3 origin)
         {
             PlayBuckExplosion(origin);
+        }
+
+        [ClientRpc]
+        void RpcPlayPotClang()
+        {
+            PlayPotClang();
+        }
+
+        void PlayPotClang()
+        {
+            if (generatedClangClip == null)
+                generatedClangClip = CreatePotClangClip();
+
+            Vector3 origin = GetPassAimPoint();
+            if (Mecanim != null && Mecanim.isHuman)
+            {
+                Transform head = Mecanim.GetBoneTransform(HumanBodyBones.Head);
+                if (head != null) origin = head.position;
+            }
+
+            var listener = new GameObject("PotClangSfx");
+            listener.transform.position = origin;
+            var source = listener.AddComponent<AudioSource>();
+            source.playOnAwake = false;
+            source.spatialBlend = 1f;
+            source.minDistance = 1.5f;
+            source.maxDistance = 18f;
+            source.rolloffMode = AudioRolloffMode.Linear;
+            source.pitch = Random.Range(0.92f, 1.08f);
+            source.PlayOneShot(generatedClangClip, 0.9f);
+            Object.Destroy(listener, 1.2f);
+        }
+
+        static AudioClip CreatePotClangClip()
+        {
+            const int sampleRate = 22050;
+            const float duration = 0.32f;
+            int samples = Mathf.RoundToInt(sampleRate * duration);
+            var data = new float[samples];
+            var rng = new System.Random(41);
+            for (int i = 0; i < samples; i++)
+            {
+                float t = i / (float)sampleRate;
+                float env = Mathf.Exp(-t * 14f);
+                float ring = Mathf.Sin(2f * Mathf.PI * 1680f * t) * env
+                    + Mathf.Sin(2f * Mathf.PI * 2460f * t) * env * 0.45f
+                    + Mathf.Sin(2f * Mathf.PI * 880f * t) * env * 0.35f
+                    + Mathf.Sin(2f * Mathf.PI * 220f * t) * env * 0.28f;
+                float noise = (float)(rng.NextDouble() * 2.0 - 1.0) * env * 0.22f;
+                data[i] = Mathf.Clamp(ring * 0.7f + noise, -1f, 1f);
+            }
+
+            var clip = AudioClip.Create("PotClang", samples, 1, sampleRate, false);
+            clip.SetData(data, 0);
+            return clip;
         }
 
         void OnSyncVanished(bool _, bool vanished)
@@ -2476,6 +2589,8 @@ namespace Brawl
             ApplyComputerHoldingPose(true);
             PlayComputerPickupAnimation();
             ServerHoldComputerAtHands();
+            if (BrawlGameManager.PassTheBuckActive)
+                RpcPlayPotClang();
 
             if (!applyCatchStun)
             {
