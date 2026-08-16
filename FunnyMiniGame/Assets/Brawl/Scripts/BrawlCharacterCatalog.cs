@@ -19,6 +19,8 @@ namespace Brawl
         {
             [Tooltip("角色 Prefab，进房生成和 HUD 匹配都用它")]
             public GameObject prefab;
+            [Tooltip("HUD 和结算页显示的角色名，空着则回退 Player 1-4")]
+            public string displayName;
             [Tooltip("Slot 头像，空着则该角色不显示专用头像")]
             public Sprite avatar;
         }
@@ -72,13 +74,61 @@ namespace Brawl
             return result;
         }
 
+        public Sprite ResolveAvatar(IBrawlPlayer player)
+        {
+            return ResolveAvatarByIndex(ResolveCharacterIndex(player));
+        }
+
+        public string ResolveName(IBrawlPlayer player)
+        {
+            return ResolveNameByIndex(ResolveCharacterIndex(player));
+        }
+
+        public string ResolveNameByIndex(int index)
+        {
+            EnsureMigrated();
+            if (index < 0 || characters == null || index >= characters.Length || characters[index] == null)
+                return "";
+            return characters[index].displayName != null ? characters[index].displayName.Trim() : "";
+        }
+
+        int ResolveCharacterIndex(IBrawlPlayer player)
+        {
+            EnsureMigrated();
+            int index = player != null ? player.CharacterIndex : -1;
+            if (index < 0)
+                index = ResolveIndex(player != null ? player.Transform : null, -1);
+            return index;
+        }
+
         public Sprite ResolveAvatar(Transform actor, int fallbackIndex)
         {
             EnsureMigrated();
+            if (actor != null)
+            {
+                var fan = actor.GetComponent<NetFAnnequinController>();
+                if (fan != null && fan.CharacterIndex >= 0)
+                    return ResolveAvatarByIndex(fan.CharacterIndex);
+            }
+
             int index = ResolveIndex(actor, fallbackIndex);
-            if (index < 0 || characters == null || index >= characters.Length || characters[index] == null)
-                return null;
-            return characters[index].avatar;
+            return ResolveAvatarByIndex(index);
+        }
+
+        public int IndexOfPrefab(GameObject prefab)
+        {
+            EnsureMigrated();
+            if (prefab == null || characters == null)
+                return -1;
+
+            for (int i = 0; i < characters.Length; i++)
+            {
+                GameObject entry = characters[i] != null ? characters[i].prefab : null;
+                if (entry == prefab || (entry != null && entry.name == prefab.name))
+                    return i;
+            }
+
+            return -1;
         }
 
         public int ResolveIndex(Transform actor, int fallbackIndex)
@@ -87,22 +137,37 @@ namespace Brawl
             if (characters == null || characters.Length == 0)
                 return -1;
 
+            int best = -1;
+            int bestLength = -1;
             string actorName = actor != null ? actor.name : string.Empty;
             if (!string.IsNullOrEmpty(actorName))
             {
                 for (int i = 0; i < characters.Length; i++)
                 {
                     GameObject prefab = characters[i] != null ? characters[i].prefab : null;
-                    if (prefab != null
-                        && !string.IsNullOrEmpty(prefab.name)
-                        && actorName.IndexOf(prefab.name, StringComparison.OrdinalIgnoreCase) >= 0)
-                        return i;
+                    if (prefab == null || string.IsNullOrEmpty(prefab.name))
+                        continue;
+                    if (actorName.IndexOf(prefab.name, StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+                    if (prefab.name.Length <= bestLength)
+                        continue;
+                    bestLength = prefab.name.Length;
+                    best = i;
                 }
             }
 
+            if (best >= 0)
+                return best;
             if (fallbackIndex >= 0 && fallbackIndex < characters.Length)
                 return fallbackIndex;
             return -1;
+        }
+
+        Sprite ResolveAvatarByIndex(int index)
+        {
+            if (index < 0 || characters == null || index >= characters.Length || characters[index] == null)
+                return null;
+            return characters[index].avatar;
         }
 
         void OnEnable()
@@ -141,12 +206,35 @@ namespace Brawl
                 next[i] = new CharacterEntry
                 {
                     prefab = prefabs[i],
+                    displayName = FindExistingName(prefabs[i], i),
                     avatar = FindExistingAvatar(prefabs[i], i)
                 };
             }
 
             characters = next;
             characterPrefabs = prefabs;
+        }
+
+        string FindExistingName(GameObject prefab, int index)
+        {
+            if (characters == null)
+                return "";
+
+            if (prefab != null)
+            {
+                for (int i = 0; i < characters.Length; i++)
+                {
+                    CharacterEntry entry = characters[i];
+                    if (entry == null || entry.prefab == null || string.IsNullOrEmpty(entry.displayName))
+                        continue;
+                    if (entry.prefab == prefab || entry.prefab.name == prefab.name)
+                        return entry.displayName;
+                }
+            }
+
+            if (index >= 0 && index < characters.Length && characters[index] != null)
+                return characters[index].displayName ?? "";
+            return "";
         }
 
         Sprite FindExistingAvatar(GameObject prefab, int index)

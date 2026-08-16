@@ -407,7 +407,7 @@ namespace Brawl
                 }
                 else
                 {
-                    Sprite avatar = ResolvePlayerAvatar(player, index);
+                    Sprite avatar = ResolvePlayerAvatar(player);
                     if (avatar != null)
                         slot.Avatar.sprite = avatar;
                     slot.Avatar.color = Color.white;
@@ -472,12 +472,10 @@ namespace Brawl
             return mark;
         }
 
-        static Sprite ResolvePlayerAvatar(IBrawlPlayer player, int fallbackIndex)
+        static Sprite ResolvePlayerAvatar(IBrawlPlayer player)
         {
             BrawlCharacterCatalog catalog = BrawlCharacterCatalog.Load();
-            return catalog != null
-                ? catalog.ResolveAvatar(player != null ? player.Transform : null, fallbackIndex)
-                : null;
+            return catalog != null ? catalog.ResolveAvatar(player) : null;
         }
 
         Sprite ResolveEmptyAvatarSprite(PlayerSlot slot)
@@ -764,7 +762,7 @@ namespace Brawl
                 if (card.Comment != null) card.Comment.text = $"评语：{BrawlRoundResultRules.Comment(grade)}";
                 if (card.Avatar != null)
                 {
-                    card.Avatar.sprite = ResolvePlayerAvatar(player, i);
+                    card.Avatar.sprite = ResolvePlayerAvatar(player);
                     card.Avatar.color = Color.white;
                 }
 

@@ -12,6 +12,7 @@ namespace Brawl
         Vector3 SpawnPosition { get; set; }
         PlayerAttributes Attributes { get; }
         bool IsDead { get; }
+        int CharacterIndex { get; }
         void ServerTeleport(Vector3 position);
     }
 }

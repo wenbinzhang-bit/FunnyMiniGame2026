@@ -46,6 +46,7 @@ namespace Brawl
         public Transform Transform => this != null ? transform : null;
         public PlayerAttributes Attributes { get; private set; }
         public bool IsDead => false;
+        public int CharacterIndex => -1;
 
         /// <summary>服务端:是否接受该玩家的移动输入(对局管理器可冻结)。</summary>
         public bool InputActive { get; set; } = true;
