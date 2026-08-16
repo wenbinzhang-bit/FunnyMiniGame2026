@@ -717,7 +717,6 @@ namespace Brawl
             if (ordered.Count > roundResultCards.Length)
                 ordered.RemoveRange(roundResultCards.Length, ordered.Count - roundResultCards.Length);
 
-            EnsurePlayerAvatarSprites();
             float elapsed = gm.HudRoundResultElapsedSeconds;
             for (int i = 0; i < roundResultCards.Length; i++)
             {
@@ -746,10 +745,7 @@ namespace Brawl
                 if (card.Stamp != null) card.Stamp.sprite = ResultStampSprite(grade);
                 if (card.Avatar != null)
                 {
-                    int avatarIndex = ResolvePlayerAvatarIndex(player, i);
-                    card.Avatar.sprite = playerAvatarSprites != null && avatarIndex < playerAvatarSprites.Length
-                        ? playerAvatarSprites[avatarIndex]
-                        : null;
+                    card.Avatar.sprite = ResolvePlayerAvatar(player, i);
                     card.Avatar.color = Color.white;
                 }
 
