@@ -17,6 +17,7 @@ namespace Brawl
         const int ScoreBarMaxFallback = 99;
         const string Level01RulesArtworkResource = "UI/Rules/Level01Briefing";
         const string Level02RulesArtworkResource = "UI/Rules/Level02Briefing";
+        const string Level03RulesArtworkResource = "UI/Rules/Level03Briefing";
         const string ResultPaperResource = "UI/Results/ResumePaper";
         const float ResultRevealInterval = 0.65f;
         const float ResultRevealDuration = 0.28f;
@@ -1951,7 +1952,7 @@ namespace Brawl
         bool ShouldUseIllustratedRules()
         {
             int levelIndex = BrawlLevelCatalog.GetLevelIndex(BrawlLevelCatalog.ActiveSceneName());
-            return (levelIndex == 0 || levelIndex == 1)
+            return levelIndex >= 0 && levelIndex <= 2
                 && RulesArtwork != null
                 && RulesArtwork.texture != null;
         }
@@ -1974,6 +1975,7 @@ namespace Brawl
             {
                 case 0: return Level01RulesArtworkResource;
                 case 1: return Level02RulesArtworkResource;
+                case 2: return Level03RulesArtworkResource;
                 default: return null;
             }
         }
