@@ -183,6 +183,10 @@ MonoBehaviour:
   Body: {fileID: 3371433138481771201}
   PickupRenderers:
   - {fileID: 5323960553518934827}
+  TypingLoopClip: {fileID: 8300000, guid: 19f4b83fe5cc4572ac8acb65d9c74227, type: 3}
+  TypingLoopVolume: 0.55
+  TypingMinDistance: 1.5
+  TypingMaxDistance: 14
 --- !u!114 &1125357777356533851
 MonoBehaviour:
   m_ObjectHideFlags: 0

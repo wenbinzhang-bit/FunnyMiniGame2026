@@ -49,6 +49,12 @@ namespace Brawl
         [Tooltip("松开 Shift 后从空恢复到满所需的秒数")]
         [Min(0.1f)] public float TurboRechargeSeconds = 5f;
 
+        [Header("Turbo Exhausted Audio")]
+        [Tooltip("Shift Turbo 耗尽时播放；为空时从 Resources/Audio/TurboTired 加载")]
+        public AudioClip TurboExhaustedClip;
+        [Range(0f, 1f)] public float TurboExhaustedVolume = 0.85f;
+        public Vector2 TurboExhaustedPitchRange = new Vector2(0.98f, 1.02f);
+
         [Header("Knockdown / Get Up")]
         [Min(0.1f)] public float KnockdownGroundSeconds = 1.55f;
         [Min(0.1f)] public float GetUpFaceSeconds = 1.35f;
@@ -107,6 +113,7 @@ namespace Brawl
         FAnnequinGrabHelper grabHelper;
         PlayerAttributes attributes;
         AudioSource hitVoiceSource;
+        AudioSource turboExhaustedSource;
         FAnnequinMeleeVictim meleeVictim;
         CapsuleCollider gameplayCapsule;
         NetworkTransformReliable netTransform;
@@ -604,10 +611,47 @@ namespace Brawl
             else if (!sprintHeld || !InputActive || IsDead || IsKnockedDown || IsGrabbed)
                 next = Mathf.Min(capacity, next + Mathf.Max(0f, deltaTime) * capacity / rechargeSeconds);
 
+            bool exhaustedNow = sprintHeld && canRun
+                && syncTurboRemaining > 0.0001f && next <= 0.0001f;
             if (!Mathf.Approximately(syncTurboRemaining, next))
                 syncTurboRemaining = next;
+            if (exhaustedNow)
+                RpcPlayTurboExhausted();
 
             ApplyServerMovementSpeed();
+        }
+
+        [ClientRpc]
+        void RpcPlayTurboExhausted()
+        {
+            PlayTurboExhaustedAudio();
+        }
+
+        void PlayTurboExhaustedAudio()
+        {
+            if (TurboExhaustedClip == null)
+                TurboExhaustedClip = Resources.Load<AudioClip>("Audio/TurboTired");
+            if (TurboExhaustedClip == null) return;
+
+            if (turboExhaustedSource == null)
+            {
+                turboExhaustedSource = gameObject.AddComponent<AudioSource>();
+                turboExhaustedSource.playOnAwake = false;
+                turboExhaustedSource.loop = false;
+                turboExhaustedSource.spatialBlend = 1f;
+                turboExhaustedSource.dopplerLevel = 0f;
+                turboExhaustedSource.minDistance = 1f;
+                turboExhaustedSource.maxDistance = 14f;
+                turboExhaustedSource.rolloffMode = AudioRolloffMode.Logarithmic;
+            }
+
+            turboExhaustedSource.Stop();
+            turboExhaustedSource.clip = TurboExhaustedClip;
+            turboExhaustedSource.volume = TurboExhaustedVolume;
+            float minPitch = Mathf.Min(TurboExhaustedPitchRange.x, TurboExhaustedPitchRange.y);
+            float maxPitch = Mathf.Max(TurboExhaustedPitchRange.x, TurboExhaustedPitchRange.y);
+            turboExhaustedSource.pitch = Random.Range(minPitch, maxPitch);
+            turboExhaustedSource.Play();
         }
 
         [Server]
