@@ -621,15 +621,16 @@ namespace Brawl
                 && syncTurboRemaining > 0.0001f && next <= 0.0001f;
             if (!Mathf.Approximately(syncTurboRemaining, next))
                 syncTurboRemaining = next;
-            if (exhaustedNow)
-                RpcPlayTurboExhausted();
+            if (exhaustedNow && connectionToClient != null)
+                TargetPlayTurboExhausted();
 
             ApplyServerMovementSpeed();
         }
 
-        [ClientRpc]
-        void RpcPlayTurboExhausted()
+        [TargetRpc]
+        void TargetPlayTurboExhausted()
         {
+            if (!isLocalPlayer) return;
             PlayTurboExhaustedAudio();
         }
 
@@ -644,11 +645,9 @@ namespace Brawl
                 turboExhaustedSource = gameObject.AddComponent<AudioSource>();
                 turboExhaustedSource.playOnAwake = false;
                 turboExhaustedSource.loop = false;
-                turboExhaustedSource.spatialBlend = 1f;
+                // 体力耗尽属于本地 UI 反馈，只让操作者自己以 2D 声音听到。
+                turboExhaustedSource.spatialBlend = 0f;
                 turboExhaustedSource.dopplerLevel = 0f;
-                turboExhaustedSource.minDistance = 1f;
-                turboExhaustedSource.maxDistance = 14f;
-                turboExhaustedSource.rolloffMode = AudioRolloffMode.Logarithmic;
             }
 
             turboExhaustedSource.Stop();
@@ -771,8 +770,9 @@ namespace Brawl
                 if (!InputActive || Hero == null) return;
                 if (IsHoldingComputer || Hero.IsHoldingUp || Hero.IsThrowing || IsHoldingPlayer) return;
 
-                ServerFaceYaw(lookDir);
-                ServerTryPickupComputer();
+                // 长按右键会持续重试。没有可拾取物时不能改角色朝向，
+                // 否则会和跑步转向每 0.1 秒互相抢控制，表现为人物抖动。
+                ServerTryPickupComputer(lookDir);
             }
             catch (System.Exception e)
             {
@@ -822,8 +822,7 @@ namespace Brawl
                     ServerReleaseComputer();
                 else if (IsHoldingPlayer)
                     ServerReleaseHeldPlayer(Vector3.zero, false);
-                else
-                    Hero.DoRelease();
+                // 什么都没拿时保持当前移动/动画，不调用 Demo 的释放动作。
             }
             catch (System.Exception e)
             {
@@ -851,8 +850,7 @@ namespace Brawl
                 if (Hero == null || IsHoldingComputer || Hero.IsHoldingUp || Hero.IsThrowing || IsHoldingPlayer)
                     return;
 
-                ServerFaceYaw(lookDir);
-                ServerTryPickupComputer();
+                ServerTryPickupComputer(lookDir);
             }
             catch (System.Exception e)
             {
@@ -1325,6 +1323,7 @@ namespace Brawl
                 Mecanim.SetBool("Grounded", true);
                 Mecanim.SetBool("Moving", false);
             }
+            RestoreComputerPoseAfterGetUp();
             if (wasDown)
             {
                 if (!wasPhysicalRagdoll)
@@ -1399,6 +1398,23 @@ namespace Brawl
                     else PlayMatchedGetUp(clip);
                 }
             }
+
+            if (!down && string.IsNullOrEmpty(clip))
+                RestoreComputerPoseAfterGetUp();
+        }
+
+        void RestoreComputerPoseAfterGetUp()
+        {
+            if (syncHoldingComputer)
+            {
+                ApplyComputerHoldingPose(true);
+                return;
+            }
+
+            // RA2 从 Falling 回到 Standing 时可能恢复倒地前缓存的 Animator Layer 状态。
+            // 电脑已经掉落时再次归零 Base/Upper Body，避免起身后残留 Holding（打字）姿势。
+            FinishComputerPickupAnimation();
+            ApplyComputerHoldingPose(false);
         }
 
         void BeginVisualFall(bool faceDown)
@@ -1696,13 +1712,15 @@ namespace Brawl
         }
 
         [Server]
-        bool ServerTryPickupComputer()
+        bool ServerTryPickupComputer(Vector3 pickupLookDir = default)
         {
             if (heldComputer != null || IsHoldingPlayer || IsGrabbed || IsKnockedDown) return false;
 
             Physics.SyncTransforms();
             Vector3 origin = transform.position + Vector3.up * 0.35f;
-            Vector3 forward = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
+            Vector3 forward = Vector3.ProjectOnPlane(pickupLookDir, Vector3.up);
+            if (forward.sqrMagnitude < 0.001f)
+                forward = Vector3.ProjectOnPlane(transform.forward, Vector3.up);
             if (forward.sqrMagnitude < 0.001f) forward = Vector3.forward;
             forward.Normalize();
 
@@ -1738,6 +1756,8 @@ namespace Brawl
 
             if (best == null || !best.ServerTryClaim(this)) return false;
 
+            // 只有真正取得电脑所有权后才面向拾取方向并锁定动作。
+            ServerFaceYaw(forward);
             heldComputer = best;
             float pickupSeconds = Mathf.Max(0.1f, ComputerPickupAnimationSeconds);
             attackLockedUntil = Mathf.Max(attackLockedUntil, Time.time + pickupSeconds);

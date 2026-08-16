@@ -22,12 +22,15 @@ namespace Brawl
     }
 
     /// <summary>
-    /// 局域网房间发现：主机定时宣告 + 客户端询问，并按每块网卡的子网广播，避免只发 255.255.255.255 时刷不到。
+    /// 房间发现：主机定时宣告 + 客户端询问。
+    /// 除本网卡子网广播外，再发同 B 段（第三段不同）广播、组播，以及对已知 IP 单播，
+    /// 避免公司里 10.21.26.x 和 10.21.139.x 这种跨网段刷不到。
     /// </summary>
     [DisallowMultipleComponent]
     public sealed class BrawlServerDiscovery : MonoBehaviour
     {
         public const string NamePrefsKey = "BrawlServerName";
+        const string RecentPrefsKey = "BrawlRecentServers";
         const long Handshake = 0x46554E4E594D4732L;
         const int QueryPort = 47777;
         const int AnnouncePort = 47778;
@@ -35,13 +38,16 @@ namespace Brawl
         const float StaleSeconds = 8f;
         const byte TypeQuery = 1;
         const byte TypeAnnounce = 2;
+        const int MulticastTtl = 32;
+        const int MaxUnicastTargets = 8;
+        static readonly IPAddress MulticastGroup = IPAddress.Parse("239.55.77.78");
 
         public static BrawlServerDiscovery Instance { get; private set; }
 
         public string ServerName = "新房间";
         public bool IsSearching { get; private set; }
         public bool IsAdvertising { get; private set; }
-        public string BrowseHint { get; private set; } = "正在搜索局域网房间…";
+        public string BrowseHint { get; private set; } = "正在搜索房间…";
 
         long serverId;
         UdpClient queryListener;
@@ -53,6 +59,7 @@ namespace Brawl
         readonly Dictionary<long, BrawlFoundServer> found = new Dictionary<long, BrawlFoundServer>();
         readonly List<BrawlFoundServer> snapshot = new List<BrawlFoundServer>();
         readonly Queue<PendingPacket> pending = new Queue<PendingPacket>();
+        readonly List<string> unicastTargets = new List<string>();
         readonly object gate = new object();
 
         struct PendingPacket
@@ -83,6 +90,23 @@ namespace Brawl
                 PlayerPrefs.SetString(NamePrefsKey, name.Trim());
         }
 
+        public void AddUnicastTarget(string address)
+        {
+            if (!TryNormalizeIpv4(address, out string ip)) return;
+            if (IsLoopback(ip) || IsLinkLocal(ip)) return;
+
+            lock (gate)
+            {
+                if (unicastTargets.Count > 0 && unicastTargets[0] == ip)
+                    return;
+                unicastTargets.Remove(ip);
+                unicastTargets.Insert(0, ip);
+                while (unicastTargets.Count > MaxUnicastTargets)
+                    unicastTargets.RemoveAt(unicastTargets.Count - 1);
+                SaveRecentUnlocked();
+            }
+        }
+
         public static BrawlServerDiscovery Ensure(NetworkManager manager)
         {
             if (manager == null) return Instance;
@@ -111,7 +135,7 @@ namespace Brawl
         {
             lock (gate)
                 found.Clear();
-            BrowseHint = "正在搜索局域网房间…";
+            BrowseHint = "正在搜索房间…";
         }
 
         public void BeginBrowse()
@@ -122,9 +146,11 @@ namespace Brawl
             StopSockets();
             ClearFound();
             browsingSince = Time.unscaledTime;
-            BrowseHint = "正在搜索局域网房间…";
+            BrowseHint = "正在搜索房间…";
             announceListener = BindSocket(AnnouncePort, true);
             querySender = BindSocket(0, true);
+            JoinMulticast(announceListener);
+            JoinMulticast(querySender);
             if (announceListener == null && querySender == null)
             {
                 BrowseHint = "无法监听局域网，请检查防火墙后点刷新";
@@ -147,6 +173,7 @@ namespace Brawl
 
             StopSockets();
             queryListener = BindSocket(QueryPort, true);
+            JoinMulticast(queryListener);
             IsAdvertising = queryListener != null;
             IsSearching = false;
             if (queryListener != null)
@@ -200,6 +227,7 @@ namespace Brawl
             serverId = NewServerId();
             if (string.IsNullOrWhiteSpace(ServerName))
                 ServerName = DefaultServerName();
+            LoadRecent();
         }
 
         void OnEnable()
@@ -243,8 +271,8 @@ namespace Brawl
             if (!IsSearching) return;
             if (found.Count > 0) return;
             BrowseHint = Time.unscaledTime - browsingSince > 4f
-                ? "未发现房间。确认同一 Wi-Fi 后点刷新，或用下面手动填 IP"
-                : "正在搜索局域网房间…";
+                ? "未发现房间。跨网段请在下方填主机 IP 后点刷新，或直接加入"
+                : "正在搜索房间…";
         }
 
         void PulseAdvertise()
@@ -286,6 +314,7 @@ namespace Brawl
             server.PlayerCount = Mathf.Max(1, packet.PlayerCount);
             server.Uri = new Uri("kcp://" + address + ":" + port);
             server.LastSeen = Time.unscaledTime;
+            AddUnicastTarget(address);
         }
 
         void PruneStale()
@@ -391,27 +420,66 @@ namespace Brawl
 
         void SendToLan(UdpClient preferred, byte[] data, int destPort)
         {
-            TrySend(preferred, data, new IPEndPoint(IPAddress.Broadcast, destPort));
-            TrySend(preferred, data, new IPEndPoint(IPAddress.Loopback, destPort));
+            List<IPEndPoint> destinations = CollectDestinations(destPort);
+            for (int i = 0; i < destinations.Count; i++)
+                TrySend(preferred, data, destinations[i]);
 
-            List<UnicastIPAddressInformation> locals = CollectLocalIpv4();
+            List<LanNic> locals = CollectLocalIpv4();
             for (int i = 0; i < locals.Count; i++)
             {
-                UnicastIPAddressInformation info = locals[i];
-                IPAddress mask = IPAddress.Parse("255.255.255.0");
-                try
-                {
-                    if (info.IPv4Mask != null)
-                        mask = info.IPv4Mask;
-                }
-                catch
-                {
-                }
-
-                IPAddress broadcast = ToBroadcast(info.Address, mask);
-                TrySendFrom(info.Address, data, new IPEndPoint(broadcast, destPort));
-                TrySendFrom(info.Address, data, new IPEndPoint(IPAddress.Broadcast, destPort));
+                IPAddress local = locals[i].Address;
+                for (int j = 0; j < destinations.Count; j++)
+                    TrySendFrom(local, data, destinations[j]);
             }
+        }
+
+        List<IPEndPoint> CollectDestinations(int destPort)
+        {
+            var seen = new HashSet<string>();
+            var list = new List<IPEndPoint>();
+            AddDest(list, seen, IPAddress.Broadcast, destPort);
+            AddDest(list, seen, IPAddress.Loopback, destPort);
+            AddDest(list, seen, MulticastGroup, destPort);
+
+            List<LanNic> locals = CollectLocalIpv4();
+            for (int i = 0; i < locals.Count; i++)
+            {
+                LanNic nic = locals[i];
+                AddDest(list, seen, ToBroadcast(nic.Address, nic.Mask), destPort);
+                AddWideBroadcasts(list, seen, nic.Address, destPort);
+            }
+
+            lock (gate)
+            {
+                for (int i = 0; i < unicastTargets.Count; i++)
+                {
+                    if (!IPAddress.TryParse(unicastTargets[i], out IPAddress ip)) continue;
+                    AddDest(list, seen, ip, destPort);
+                }
+            }
+
+            return list;
+        }
+
+        static void AddWideBroadcasts(List<IPEndPoint> list, HashSet<string> seen, IPAddress address, int destPort)
+        {
+            if (address == null) return;
+            byte[] ip = address.GetAddressBytes();
+            if (ip.Length != 4) return;
+
+            // 10.21.26.x 与 10.21.139.x 同属 10.21.0.0/16，补发第三段通配广播。
+            if (ip[0] == 10)
+                AddDest(list, seen, new IPAddress(new byte[] { 10, ip[1], 255, 255 }), destPort);
+            else if (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31)
+                AddDest(list, seen, new IPAddress(new byte[] { 172, ip[1], 255, 255 }), destPort);
+        }
+
+        static void AddDest(List<IPEndPoint> list, HashSet<string> seen, IPAddress address, int destPort)
+        {
+            if (address == null) return;
+            string key = address + ":" + destPort;
+            if (!seen.Add(key)) return;
+            list.Add(new IPEndPoint(address, destPort));
         }
 
         static void TrySend(UdpClient client, byte[] data, IPEndPoint dest)
@@ -435,6 +503,7 @@ namespace Brawl
                 udp = new UdpClient(new IPEndPoint(local, 0));
                 udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.Broadcast, true);
                 udp.EnableBroadcast = true;
+                PrepareMulticast(udp);
                 udp.Send(data, data.Length, dest);
             }
             catch
@@ -457,6 +526,7 @@ namespace Brawl
                 udp.Client.Bind(new IPEndPoint(IPAddress.Any, port));
                 udp.EnableBroadcast = broadcast;
                 udp.MulticastLoopback = true;
+                PrepareMulticast(udp);
                 return udp;
             }
             catch (Exception ex)
@@ -466,9 +536,53 @@ namespace Brawl
             }
         }
 
-        static List<UnicastIPAddressInformation> CollectLocalIpv4()
+        static void PrepareMulticast(UdpClient udp)
         {
-            var list = new List<UnicastIPAddressInformation>();
+            if (udp == null) return;
+            try
+            {
+                udp.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, MulticastTtl);
+                udp.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastLoopback, true);
+            }
+            catch
+            {
+            }
+        }
+
+        static void JoinMulticast(UdpClient udp)
+        {
+            if (udp == null) return;
+            PrepareMulticast(udp);
+            try
+            {
+                udp.JoinMulticastGroup(MulticastGroup);
+            }
+            catch
+            {
+            }
+
+            List<LanNic> locals = CollectLocalIpv4();
+            for (int i = 0; i < locals.Count; i++)
+            {
+                try
+                {
+                    udp.JoinMulticastGroup(MulticastGroup, locals[i].Address);
+                }
+                catch
+                {
+                }
+            }
+        }
+
+        struct LanNic
+        {
+            public IPAddress Address;
+            public IPAddress Mask;
+        }
+
+        static List<LanNic> CollectLocalIpv4()
+        {
+            var list = new List<LanNic>();
             try
             {
                 foreach (NetworkInterface nic in NetworkInterface.GetAllNetworkInterfaces())
@@ -479,7 +593,12 @@ namespace Brawl
                     {
                         if (addr.Address.AddressFamily != AddressFamily.InterNetwork) continue;
                         if (IPAddress.IsLoopback(addr.Address)) continue;
-                        list.Add(addr);
+                        if (IsLinkLocal(addr.Address.ToString())) continue;
+                        list.Add(new LanNic
+                        {
+                            Address = addr.Address,
+                            Mask = TryGetMask(addr)
+                        });
                     }
                 }
             }
@@ -488,6 +607,39 @@ namespace Brawl
             }
 
             return list;
+        }
+
+        static IPAddress TryGetMask(UnicastIPAddressInformation info)
+        {
+            try
+            {
+                int prefix = info.PrefixLength;
+                if (prefix > 0 && prefix <= 32)
+                    return PrefixToMask(prefix);
+            }
+            catch
+            {
+            }
+
+            try
+            {
+                if (info.IPv4Mask != null)
+                    return info.IPv4Mask;
+            }
+            catch
+            {
+            }
+
+            return IPAddress.Parse("255.255.255.0");
+        }
+
+        static IPAddress PrefixToMask(int prefix)
+        {
+            uint bits = prefix >= 32 ? uint.MaxValue : prefix <= 0 ? 0 : uint.MaxValue << (32 - prefix);
+            byte[] raw = BitConverter.GetBytes(bits);
+            if (BitConverter.IsLittleEndian)
+                Array.Reverse(raw);
+            return new IPAddress(raw);
         }
 
         static IPAddress ToBroadcast(IPAddress address, IPAddress mask)
@@ -504,7 +656,51 @@ namespace Brawl
 
         static bool IsLoopback(string address)
         {
-            return address == "127.0.0.1" || address == "::1" || address == "localhost";
+            if (string.IsNullOrWhiteSpace(address)) return false;
+            string trimmed = address.Trim();
+            return trimmed == "127.0.0.1" || trimmed == "::1" || trimmed == "localhost";
+        }
+
+        static bool IsLinkLocal(string address)
+        {
+            return !string.IsNullOrWhiteSpace(address) && address.StartsWith("169.254.");
+        }
+
+        static bool TryNormalizeIpv4(string address, out string ip)
+        {
+            ip = null;
+            if (string.IsNullOrWhiteSpace(address)) return false;
+            string trimmed = address.Trim();
+            int colon = trimmed.IndexOf(':');
+            if (colon > 0 && trimmed.IndexOf('.') > 0)
+                trimmed = trimmed.Substring(0, colon);
+            if (!IPAddress.TryParse(trimmed, out IPAddress parsed)) return false;
+            if (parsed.AddressFamily != AddressFamily.InterNetwork) return false;
+            ip = parsed.ToString();
+            return true;
+        }
+
+        void LoadRecent()
+        {
+            string raw = PlayerPrefs.GetString(RecentPrefsKey, "");
+            if (string.IsNullOrWhiteSpace(raw)) return;
+            string[] parts = raw.Split(',');
+            lock (gate)
+            {
+                for (int i = 0; i < parts.Length; i++)
+                {
+                    if (!TryNormalizeIpv4(parts[i], out string ip)) continue;
+                    if (IsLoopback(ip) || IsLinkLocal(ip)) continue;
+                    if (unicastTargets.Contains(ip)) continue;
+                    unicastTargets.Add(ip);
+                    if (unicastTargets.Count >= MaxUnicastTargets) break;
+                }
+            }
+        }
+
+        void SaveRecentUnlocked()
+        {
+            PlayerPrefs.SetString(RecentPrefsKey, string.Join(",", unicastTargets.ToArray()));
         }
 
         static long NewServerId()

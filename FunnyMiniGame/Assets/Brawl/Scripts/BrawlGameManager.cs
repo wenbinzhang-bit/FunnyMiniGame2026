@@ -291,19 +291,18 @@ namespace Brawl
 
         void LateUpdate()
         {
-            bool showWall = ShouldShowMatchAirWall();
-            if (showWall)
-                BrawlAirWall.EnsureInLevel(this);
-            BrawlAirWall.SetAllActive(showWall);
+            ApplyAirWall();
         }
 
         bool ShouldShowMatchAirWall()
         {
+            if (!airWallActive)
+                return false;
             if (BrawlLevelCatalog.ActiveSceneIsLauncher())
                 return false;
             if (!BrawlLevelCatalog.ActiveSceneIsLevel())
                 return false;
-            return state != EState.Playing && state != EState.RoundEnd && state != EState.FinalKpi;
+            return state == EState.Rules || state == EState.Waiting;
         }
 
         [Server]
@@ -643,7 +642,6 @@ namespace Brawl
             foreach (var p in players)
             {
                 ServerRescueIfNeeded(p);
-                ServerContainInAirWall(p);
                 if (p?.motor != null)
                     p.motor.InputActive = false;
             }
@@ -681,7 +679,6 @@ namespace Brawl
             foreach (var p in players)
             {
                 ServerRescueIfNeeded(p);
-                ServerContainInAirWall(p);
             }
 
             ServerRescueLooseComputers();
@@ -938,7 +935,6 @@ namespace Brawl
             ServerDropAllComputers();
             Record.ResetCurrentRoundScores();
 
-            int i = 0;
             foreach (var p in players)
             {
                 if (p?.motor == null) continue;
@@ -946,11 +942,8 @@ namespace Brawl
                 p.motor.InputActive = true;
                 if (p.motor is NetFAnnequinController fan)
                     fan.ServerResetTurbo();
-                Transform start = NetworkManager.singleton.GetStartPosition();
-                Vector3 pos = start != null ? start.position : new Vector3(i * 2f, 3f, 0f);
-                p.motor.SpawnPosition = pos;
-                p.motor.ServerTeleport(pos + Vector3.up * 1f);
-                i++;
+                if (p.motor.Transform != null)
+                    p.motor.SpawnPosition = p.motor.Transform.position;
             }
 
             ServerResetAllComputers();
@@ -1110,26 +1103,8 @@ namespace Brawl
             if (spawn.sqrMagnitude < 0.01f)
                 spawn = new Vector3(0f, 3f, 0f);
             Vector3 dest = spawn + Vector3.up * 1f;
-            if (airWallActive)
-            {
-                BrawlAirWall wall = BrawlAirWall.Ensure(this);
-                if (wall != null && !wall.Contains(dest))
-                    dest = wall.ClampInside(dest);
-            }
             p.motor.ServerTeleport(dest);
             p.motor.InputActive = state == EState.Playing || state == EState.Waiting;
-        }
-
-        [Server]
-        void ServerContainInAirWall(PlayerEntry p)
-        {
-            if (!airWallActive || !IsLiveMotor(p?.motor) || p.motor.Transform == null) return;
-
-            BrawlAirWall wall = BrawlAirWall.Ensure(this);
-            if (wall == null) return;
-            Vector3 pos = p.motor.Transform.position;
-            if (wall.Contains(pos)) return;
-            p.motor.ServerTeleport(wall.ClampInside(pos));
         }
 
         [Server]
@@ -1151,9 +1126,8 @@ namespace Brawl
         {
             bool show = ShouldShowMatchAirWall();
             BrawlAirWall.ClearStale();
-            BrawlAirWall wall = show ? BrawlAirWall.EnsureInLevel(this) : BrawlAirWall.Ensure(this);
-            if (wall != null)
-                wall.SetActiveWall(show);
+            if (show)
+                BrawlAirWall.EnsureInLevel(this, NetworkServer.active);
             BrawlAirWall.SetAllActive(show);
         }
 

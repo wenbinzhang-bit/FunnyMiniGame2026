@@ -275,7 +275,7 @@ QualitySettings:
     useLegacyDetailDistribution: 1
     vSyncCount: 1
     realtimeGICPUUsage: 100
-    lodBias: 2
+    lodBias: 5
     maximumLODLevel: 0
     enableLODCrossFade: 1
     streamingMipmapsActive: 0
@@ -301,4 +301,7 @@ QualitySettings:
     terrainMaxTrees: 50
     excludedTargetPlatforms: []
   m_TextureMipmapLimitGroupNames: []
-  m_PerPlatformDefaultQuality: {}
+  m_PerPlatformDefaultQuality:
+    Android: 5
+    Server: 5
+    Standalone: 5
