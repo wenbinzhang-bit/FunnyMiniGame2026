@@ -43,6 +43,10 @@ namespace Brawl
         public Vector3 ComputerHoldEuler = new Vector3(8f, 0f, 0f);
         [Min(0f)] public float ComputerDropForward = 0.8f;
 
+        [Header("Pass The Buck")]
+        [Min(0.1f)] public float ComputerThrowAnimationLockSeconds = 0.7f;
+        [Min(0.1f)] public float ComputerThrowMovementLockSeconds = 0.45f;
+
         [Header("Turbo")]
         [Tooltip("按住 Shift 加速跑可连续使用的秒数")]
         [Min(0.1f)] public float TurboDurationSeconds = 5f;
@@ -98,6 +102,14 @@ namespace Brawl
         public bool IsInKnockback => isServer && Time.time < knockbackUntil;
         public bool IsHoldingPlayer => heldPlayer != null;
         public bool IsHoldingComputer => syncHoldingComputer || heldComputer != null;
+        public bool IsCatchStunned => isServer && Time.time < catchStunUntil;
+        public bool CanThrowComputer =>
+            BrawlGameManager.PassTheBuckActive
+            && IsHoldingComputer
+            && !IsCatchStunned
+            && !IsKnockedDown
+            && !IsGrabbed;
+        public bool CanDropComputer => !BrawlGameManager.PassTheBuckDumpActive;
         public bool IsGrabbed => grabber != null;
         public bool IsKnockedDown { get; private set; }
         public Vector3 KnockbackVelocity { get; private set; }
@@ -136,6 +148,7 @@ namespace Brawl
         float localAttackInputLockedUntil = -1f;
         float localAttackMovementLockedUntil = -1f;
         float lastReceivedHitTime = -1f;
+        float catchStunUntil = -1f;
         bool serverJumpAvailable = true;
         bool serverLeftGroundSinceJump;
         bool serverCatching;
@@ -524,7 +537,18 @@ namespace Brawl
         void RequestPunch()
         {
             if (!InputActive || Time.time < localAttackInputLockedUntil) return;
-            if (IsHoldingComputer || (mouseActions != null && mouseActions.IsPickupButtonHeld)) return;
+            if (IsHoldingComputer)
+            {
+                if (!CanThrowComputer) return;
+                if (mouseActions != null)
+                    mouseActions.CancelHold();
+                BeginLocalAttackLocks(ComputerThrowAnimationLockSeconds, ComputerThrowMovementLockSeconds);
+                PlayLocalComputerThrow();
+                CmdThrowComputer(GetLookDir());
+                return;
+            }
+
+            if (mouseActions != null && mouseActions.IsPickupButtonHeld) return;
 
             bool willThrow = Hero != null && (Hero.IsHoldingUp || Hero.IsThrowing);
             if (!willThrow)
@@ -698,6 +722,12 @@ namespace Brawl
             ServerExecutePunchOrThrow(0, transform.forward);
         }
 
+        public void ServerBotThrowComputer(Vector3 lookDir)
+        {
+            if (!isServer) return;
+            ServerStartComputerThrow(lookDir);
+        }
+
         public bool ServerBotTryPickup()
         {
             if (!isServer || !InputActive) return false;
@@ -725,7 +755,7 @@ namespace Brawl
 
         void ServerExecutePunchOrThrow(byte kind, Vector3 lookDir)
         {
-            if (!InputActive || Hero == null) return;
+            if (!InputActive || Hero == null || IsCatchStunned) return;
             if (IsHoldingComputer) return;
             if (Hero.IsHoldingUp || Hero.IsThrowing || IsHoldingPlayer)
             {
@@ -766,6 +796,19 @@ namespace Brawl
             catch (System.Exception e)
             {
                 Debug.LogWarning($"CmdPunchOrThrow: {e.Message}");
+            }
+        }
+
+        [Command]
+        void CmdThrowComputer(Vector3 lookDir)
+        {
+            try
+            {
+                ServerStartComputerThrow(lookDir);
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogWarning($"CmdThrowComputer: {e.Message}");
             }
         }
 
@@ -826,7 +869,10 @@ namespace Brawl
             {
                 if (!InputActive || Hero == null) return;
                 if (heldComputer != null)
+                {
+                    if (!CanDropComputer) return;
                     ServerReleaseComputer();
+                }
                 else if (IsHoldingPlayer)
                     ServerReleaseHeldPlayer(Vector3.zero, false);
                 // 什么都没拿时保持当前移动/动画，不调用 Demo 的释放动作。
@@ -846,7 +892,10 @@ namespace Brawl
                 if (!serverCatching)
                 {
                     if (heldComputer != null)
+                    {
+                        if (!CanDropComputer) return;
                         ServerReleaseComputer();
+                    }
                     else if (IsHoldingPlayer)
                         ServerReleaseHeldPlayer(Vector3.zero, false);
                     else if (Hero != null)
@@ -898,6 +947,56 @@ namespace Brawl
 
             if (throwFallback != null) StopCoroutine(throwFallback);
             throwFallback = StartCoroutine(ThrowFallback(throwDir));
+        }
+
+        [Server]
+        void ServerStartComputerThrow(Vector3 lookDir)
+        {
+            if (!InputActive || !CanThrowComputer) return;
+            if (throwFallback != null) return;
+
+            ServerFaceYaw(lookDir);
+            Vector3 throwDir = lookDir.sqrMagnitude > 0.0001f ? lookDir.normalized : transform.forward;
+            if (throwDir.y < 0.12f) throwDir.y = 0.12f;
+            throwDir.Normalize();
+
+            float attackLock = Mathf.Max(0.1f, ComputerThrowAnimationLockSeconds);
+            float moveLock = Mathf.Max(0.1f, ComputerThrowMovementLockSeconds);
+            attackLockedUntil = Time.time + attackLock;
+            attackMovementLockedUntil = Time.time + moveLock;
+            StopMovementForAttack();
+            PlayLocalComputerThrow();
+            RpcPlayClip("Holding Throw", 0);
+
+            if (throwFallback != null) StopCoroutine(throwFallback);
+            throwFallback = StartCoroutine(ComputerThrowFallback(throwDir));
+        }
+
+        IEnumerator ComputerThrowFallback(Vector3 throwDir)
+        {
+            yield return new WaitForSeconds(ThrowEventDelay);
+            throwFallback = null;
+            if (heldComputer == null || IsKnockedDown || IsGrabbed || IsDead)
+            {
+                if (Hero != null) Hero.ClearThrowing();
+                yield break;
+            }
+
+            float speed = BrawlGameManager.Instance != null
+                ? BrawlGameManager.Instance.ActiveThrowSpeed
+                : 14f;
+            ServerReleaseComputer(true, throwDir * speed, true);
+            if (Hero != null) Hero.ClearThrowing();
+        }
+
+        void PlayLocalComputerThrow()
+        {
+            if (Hero != null)
+                Hero.PlayThrowAnimation();
+            if (Mecanim == null) return;
+            if (Mecanim.layerCount > 1)
+                Mecanim.SetLayerWeight(1, 0f);
+            Mecanim.CrossFadeInFixedTime("Holding Throw", 0.145f, 0, 0f);
         }
 
         IEnumerator ThrowFallback(Vector3 throwDir)
@@ -1086,7 +1185,7 @@ namespace Brawl
             if (isClient) PlayHitVoice();
             RpcPlayHitVoice();
             serverCatching = false;
-            if (heldComputer != null)
+            if (heldComputer != null && CanDropComputer)
             {
                 Vector3 toss = Vector3.ProjectOnPlane(impulse, Vector3.up);
                 if (toss.sqrMagnitude < 0.01f) toss = -transform.forward;
@@ -1639,7 +1738,7 @@ namespace Brawl
         public void ServerTeleport(Vector3 position)
         {
             ServerForceStand();
-            if (heldComputer != null)
+            if (heldComputer != null && CanDropComputer)
                 ServerReleaseComputer(true);
             if (heldPlayer != null)
                 ServerReleaseHeldPlayer(Vector3.zero, false);
@@ -1721,7 +1820,7 @@ namespace Brawl
         [Server]
         bool ServerTryPickupComputer(Vector3 pickupLookDir = default)
         {
-            if (heldComputer != null || IsHoldingPlayer || IsGrabbed || IsKnockedDown) return false;
+            if (heldComputer != null || IsHoldingPlayer || IsGrabbed || IsKnockedDown || IsCatchStunned) return false;
 
             Physics.SyncTransforms();
             Vector3 origin = transform.position + Vector3.up * 0.35f;
@@ -1908,14 +2007,59 @@ namespace Brawl
         }
 
         [Server]
-        public void ServerForceDropComputer(Vector3 extraVelocity = default)
+        public void ServerForceDropComputer(Vector3 extraVelocity = default, bool force = false)
         {
-            if (heldComputer != null)
-                ServerReleaseComputer(false, extraVelocity);
+            if (heldComputer == null) return;
+            if (!force && !CanDropComputer) return;
+            ServerReleaseComputer(false, extraVelocity);
         }
 
         [Server]
-        void ServerReleaseComputer(bool dropFromHands = false, Vector3 extraVelocity = default)
+        public void ServerForceReceiveComputer(KpiComputerObjective computer, bool applyCatchStun = true)
+        {
+            if (computer == null || IsDead || IsKnockedDown || IsGrabbed) return;
+
+            if (computerPickupRoutine != null)
+            {
+                StopCoroutine(computerPickupRoutine);
+                computerPickupRoutine = null;
+            }
+
+            heldComputer = computer;
+            syncHoldingComputer = true;
+            FinishComputerPickupAnimation();
+            ApplyComputerHoldingPose(true);
+            PlayComputerPickupAnimation();
+            ServerHoldComputerAtHands();
+
+            if (!applyCatchStun)
+            {
+                RpcForceCatchComputer(0f);
+                return;
+            }
+
+            float stunSeconds = BrawlGameManager.Instance != null
+                ? BrawlGameManager.Instance.ActiveCatchStunSeconds
+                : 1f;
+            catchStunUntil = Time.time + stunSeconds;
+            attackLockedUntil = Mathf.Max(attackLockedUntil, catchStunUntil);
+            attackMovementLockedUntil = Mathf.Max(attackMovementLockedUntil, catchStunUntil);
+            StopMovementForAttack();
+            RpcForceCatchComputer(stunSeconds);
+        }
+
+        [ClientRpc]
+        void RpcForceCatchComputer(float stunSeconds)
+        {
+            if (isServer) return;
+            ApplyComputerHoldingPose(true);
+            PlayComputerPickupAnimation();
+            if (isLocalPlayer && stunSeconds > 0f)
+                BeginLocalAttackLocks(stunSeconds, stunSeconds);
+        }
+
+        [Server]
+        void ServerReleaseComputer(bool dropFromHands = false, Vector3 extraVelocity = default, bool thrown = false)
         {
             if (computerPickupRoutine != null)
             {
@@ -1926,6 +2070,7 @@ namespace Brawl
             KpiComputerObjective computer = heldComputer;
             heldComputer = null;
             syncHoldingComputer = false;
+            catchStunUntil = -1f;
             FinishComputerPickupAnimation();
             ApplyComputerHoldingPose(false);
             RpcCancelComputerPickup();
@@ -1936,16 +2081,19 @@ namespace Brawl
             horizontalForward.Normalize();
             GetComputerHoldPose(out Vector3 holdPosition, out _);
             Vector3 releasePosition = dropFromHands
-                ? holdPosition + horizontalForward * 0.25f
+                ? holdPosition + horizontalForward * 0.35f + Vector3.up * 0.1f
                 : transform.position + horizontalForward * ComputerDropForward + Vector3.up * 0.35f;
             Vector3 releaseVelocity = extraVelocity;
-            if (Mover != null && Mover.Rigb != null && !Mover.Rigb.isKinematic)
+            if (!thrown && Mover != null && Mover.Rigb != null && !Mover.Rigb.isKinematic)
             {
                 Vector3 carry = Vector3.ProjectOnPlane(Mover.Rigb.velocity, Vector3.up);
                 releaseVelocity += Vector3.ClampMagnitude(carry, 3f);
             }
 
-            computer.ServerRelease(this, releasePosition, releaseVelocity);
+            if (thrown)
+                computer.ServerThrow(this, releasePosition, releaseVelocity);
+            else
+                computer.ServerRelease(this, releasePosition, releaseVelocity);
         }
 
         [Server]
@@ -2010,7 +2158,7 @@ namespace Brawl
         public void ServerBeginGrabbed(NetFAnnequinController who)
         {
             serverCatching = false;
-            if (heldComputer != null)
+            if (heldComputer != null && CanDropComputer)
                 ServerReleaseComputer(true);
 
             if (IsKnockedDown)

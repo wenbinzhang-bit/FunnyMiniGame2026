@@ -7,7 +7,7 @@ namespace Brawl
 {
     /// <summary>
     /// 关卡表：Launcher 是大厅。
-    /// 整场只打 2 关：第1关 MiniGame_00，第2关 MiniGame_01，结束后汇总 KPI。
+    /// 整场只打 2 关：第1关 MiniGame_00 抢电脑，第2关 MiniGame_01 甩锅，结束后汇总 KPI。
     /// </summary>
     public static class BrawlLevelCatalog
     {
@@ -65,6 +65,13 @@ namespace Brawl
             int index = GetLevelIndex(sceneName);
             if (index < 0) return NormalizeName(sceneName);
             return $"第{index + 1}关";
+        }
+
+        public static BrawlPlayMode DefaultPlayMode(string sceneName)
+        {
+            return GetLevelIndex(sceneName) >= 1
+                ? BrawlPlayMode.PassTheBuck
+                : BrawlPlayMode.HoldKpi;
         }
 
         public static string GetFirstLevel()

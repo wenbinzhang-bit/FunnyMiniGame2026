@@ -9,7 +9,7 @@ namespace Brawl
     /// <summary>
     /// 跨关卡对局：Launcher 大厅全员准备后进入 MiniGame_00 → MiniGame_01，共 2 关；
     /// 每关先显示规则，再空气墙等待其他玩家进场景，倒计时结束才开打。
-    /// 第 2 关结束后汇总整场 KPI。
+    /// 玩法由场景里的 BrawlLevelInfo.PlayMode 决定，第 2 关结束后汇总整场 KPI。
     /// </summary>
     public class BrawlGameManager : NetworkBehaviour
     {
@@ -54,6 +54,15 @@ namespace Brawl
         [Tooltip("场景里的空气墙实体，可在 Hierarchy 里拖墙调整")]
         public BrawlAirWall AirWall;
 
+        [Tooltip("甩锅模式兜底：场景未配置 LevelInfo 时使用")]
+        [Min(0)] public int BuckPenalty = 15;
+
+        [Tooltip("甩锅模式兜底：被砸中后的硬直秒数")]
+        [Min(0.2f)] public float CatchStunSeconds = 1f;
+
+        [Tooltip("甩锅模式兜底：砸出电脑的速度")]
+        [Min(1f)] public float ThrowSpeed = 14f;
+
         enum EState : byte { Waiting, Playing, RoundEnd, Rules, Lobby, FinalKpi }
 
         public bool HudIsPlaying => IsHudState(EState.Playing);
@@ -73,6 +82,37 @@ namespace Brawl
         public bool HudAirWallActive => airWallActive;
         public bool HudContinueRequested => nextRoundRequested;
         public bool HudIsHost => NetworkServer.active;
+        public BrawlPlayMode HudPlayMode => playMode;
+        public bool IsPassTheBuck => playMode == BrawlPlayMode.PassTheBuck;
+        public int ActiveBuckPenalty => Mathf.Max(0, buckPenalty);
+        public float ActiveCatchStunSeconds => Mathf.Max(0.2f, catchStunSeconds);
+        public float ActiveThrowSpeed => Mathf.Max(1f, throwSpeed);
+        public float ActiveBuckDumpSeconds => Mathf.Max(1f, buckDumpSeconds);
+
+        /// <summary>
+        /// 仅第二关甩锅：最后一段倒计时停止抱分，只留终局背锅。第一关抢电脑不会进入此相位。
+        /// </summary>
+        public bool IsPassTheBuckDumpPhase =>
+            IsPassTheBuck
+            && state == EState.Playing
+            && !changingScene
+            && HudRemainingSeconds <= ActiveBuckDumpSeconds;
+
+        public static bool PassTheBuckActive
+        {
+            get
+            {
+                if (Instance != null && Instance.IsPassTheBuck)
+                    return true;
+
+                // 模式还没从服务器同步过来时，按关卡默认玩法，避免第二关左键甩不出去。
+                return BrawlLevelCatalog.DefaultPlayMode(BrawlLevelCatalog.ActiveSceneName())
+                    == BrawlPlayMode.PassTheBuck;
+            }
+        }
+
+        public static bool PassTheBuckDumpActive => Instance != null && Instance.IsPassTheBuckDumpPhase;
+
         public bool HudShowLobbyActions =>
             BrawlLevelCatalog.ActiveSceneIsLauncher()
             && ServerCanAcceptLobbyReady();
@@ -143,6 +183,11 @@ namespace Brawl
         [SyncVar] string lobbyReadyLine = "";
         [SyncVar] bool lobbyAllReady;
         [SyncVar] int matchSeq;
+        [SyncVar] BrawlPlayMode playMode;
+        [SyncVar] int buckPenalty = 15;
+        [SyncVar] float catchStunSeconds = 1f;
+        [SyncVar] float throwSpeed = 14f;
+        [SyncVar] float buckDumpSeconds = 30f;
 
         class PlayerEntry
         {
@@ -405,7 +450,7 @@ namespace Brawl
                 {
                     BrawlLobbyReady.Clear(fan);
                     fan.ServerResetTurbo();
-                    fan.ServerForceDropComputer();
+                    fan.ServerForceDropComputer(force: true);
                 }
             }
 
@@ -960,6 +1005,9 @@ namespace Brawl
             if (ServerTryFinishByScoreCap())
                 return;
 
+            if (IsPassTheBuckDumpPhase)
+                ServerEnsureDumpPhaseHasHolder();
+
             foreach (var p in players)
                 ServerRescueIfNeeded(p);
 
@@ -997,6 +1045,10 @@ namespace Brawl
             foreach (var p in players)
                 p.motor.InputActive = false;
 
+            string penaltyLine = "";
+            if (!reachedScoreCap && playMode == BrawlPlayMode.PassTheBuck)
+                penaltyLine = ServerApplyBuckPenalty();
+
             ServerDropAllComputers();
             ServerRecordLevelScores();
             rankText = RankLine();
@@ -1008,7 +1060,7 @@ namespace Brawl
             string reason = reachedScoreCap
                 ? $"{PlayerLabel(capWinnerNetId)} 达到 {HudScoreMax} 分!"
                 : "时间到!";
-            statusText = $"{reason} {winner}  |  点击「下一局」继续，否则 {ResolveContinueSeconds():0} 秒后回到等待";
+            statusText = $"{reason}{penaltyLine} {winner}  |  点击「下一局」继续，否则 {ResolveContinueSeconds():0} 秒后回到等待";
             Debug.Log($"BRAWL_SMOKE: ROUND_ENDED {statusText} | {rankText}");
         }
 
@@ -1020,7 +1072,8 @@ namespace Brawl
 
             while (NetworkTime.time >= nextScoreTime)
             {
-                ServerAwardHoldScores();
+                if (!IsPassTheBuckDumpPhase)
+                    ServerAwardHoldScores();
                 nextScoreTime += Mathf.Max(0.05f, HoldScoreInterval);
             }
         }
@@ -1091,7 +1144,8 @@ namespace Brawl
         {
             if (p.motor is NetFAnnequinController fan)
             {
-                fan.ServerForceDropComputer();
+                if (!IsPassTheBuckDumpPhase)
+                    fan.ServerForceDropComputer();
                 fan.ServerResetTurbo();
             }
             Vector3 spawn = p.motor.SpawnPosition;
@@ -1173,7 +1227,7 @@ namespace Brawl
             foreach (var p in players)
             {
                 if (p.motor is NetFAnnequinController fan)
-                    fan.ServerForceDropComputer();
+                    fan.ServerForceDropComputer(force: true);
             }
         }
 
@@ -1225,6 +1279,13 @@ namespace Brawl
         {
             float remaining = Mathf.Max(0f, (float)(roundEndsAt - NetworkTime.time));
             string holders = HolderLine();
+            if (playMode == BrawlPlayMode.PassTheBuck)
+            {
+                if (remaining <= ActiveBuckDumpSeconds)
+                    return $"剩余 {FormatTime(remaining)} | {holders} | 马上背锅，只能砸给别人";
+                return $"剩余 {FormatTime(remaining)} | {holders} | 抱着加分，最后{ActiveBuckDumpSeconds:0}秒停分且不能放下，背锅-{ActiveBuckPenalty}";
+            }
+
             return $"剩余 {FormatTime(remaining)} | {holders} | 持电脑每{HoldScoreInterval:0.##}秒+{HoldScorePoints}分";
         }
 
@@ -1238,10 +1299,106 @@ namespace Brawl
                 names.Add(PlayerLabel(computer.HolderNetId));
             }
 
-            if (names.Count == 0) return "电脑无人持有";
+            if (names.Count == 0)
+            {
+                if (playMode != BrawlPlayMode.PassTheBuck)
+                    return "电脑无人持有";
+                return IsPassTheBuckDumpPhase ? "锅在地上，离得近就背" : "锅还没人背";
+            }
+            if (playMode == BrawlPlayMode.PassTheBuck)
+            {
+                return names.Count == 1
+                    ? $"{names[0]} 正在背锅"
+                    : string.Join("、", names) + " 正在背锅";
+            }
+
             return names.Count == 1
                 ? $"{names[0]} 持有电脑"
                 : string.Join("、", names) + " 持有电脑";
+        }
+
+        [Server]
+        string ServerApplyBuckPenalty()
+        {
+            int penalty = ActiveBuckPenalty;
+            if (penalty <= 0) return "";
+
+            var names = new List<string>();
+            var penalized = new HashSet<uint>();
+
+            foreach (KpiComputerObjective computer in AllComputers())
+            {
+                if (computer != null && computer.IsHeld)
+                    ServerPenalizeHolder(computer.HolderNetId, penalty, penalized, names);
+            }
+
+            foreach (var p in players)
+            {
+                if (p?.motor is NetFAnnequinController fan && fan.IsHoldingComputer)
+                    ServerPenalizeHolder(fan.NetId, penalty, penalized, names);
+            }
+
+            foreach (KpiComputerObjective computer in AllComputers())
+            {
+                if (computer == null || computer.IsHeld) continue;
+                NetFAnnequinController nearest = ServerFindNearestPlayer(computer.transform.position, false);
+                if (nearest != null)
+                    ServerPenalizeHolder(nearest.NetId, penalty, penalized, names);
+            }
+
+            if (names.Count == 0) return "";
+            return names.Count == 1
+                ? $" {names[0]} 背锅 -{penalty}！"
+                : $" {string.Join("、", names)} 背锅 -{penalty}！";
+        }
+
+        [Server]
+        void ServerEnsureDumpPhaseHasHolder()
+        {
+            foreach (KpiComputerObjective computer in AllComputers())
+            {
+                if (computer == null || computer.IsHeld || computer.IsThrown) continue;
+
+                NetFAnnequinController nearest = ServerFindNearestPlayer(computer.transform.position, true);
+                if (nearest == null) continue;
+                if (!computer.ServerTryClaim(nearest)) continue;
+                nearest.ServerForceReceiveComputer(computer);
+                Debug.Log($"BRAWL_SMOKE: DUMP_FORCE_CATCH {PlayerLabel(nearest.NetId)}");
+            }
+        }
+
+        [Server]
+        NetFAnnequinController ServerFindNearestPlayer(Vector3 from, bool mustBeAbleToCatch)
+        {
+            NetFAnnequinController best = null;
+            float bestDist = float.MaxValue;
+            foreach (var p in players)
+            {
+                if (!(p?.motor is NetFAnnequinController fan) || fan.Transform == null) continue;
+                if (fan.IsDead) continue;
+                if (mustBeAbleToCatch && (fan.IsKnockedDown || fan.IsGrabbed || fan.IsHoldingComputer))
+                    continue;
+
+                float dist = (fan.Transform.position - from).sqrMagnitude;
+                if (dist >= bestDist) continue;
+                bestDist = dist;
+                best = fan;
+            }
+
+            return best;
+        }
+
+        [Server]
+        void ServerPenalizeHolder(uint netId, int penalty, HashSet<uint> penalized, List<string> names)
+        {
+            if (netId == 0u || !penalized.Add(netId)) return;
+
+            PlayerEntry holder = FindPlayer(netId);
+            IBrawlPlayer motor = holder != null ? holder.motor : FindSpawnedPlayer(netId);
+            if (motor == null) return;
+
+            motor.Score = Mathf.Max(0, motor.Score - penalty);
+            names.Add(PlayerLabel(netId));
         }
 
         [Server]
@@ -1299,27 +1456,43 @@ namespace Brawl
 
         void BindLevelRules()
         {
+            BrawlLevelInfo info = BrawlLevelInfo.EnsureInLevel();
+            if (info != null)
+            {
+                playMode = info.PlayMode;
+                buckPenalty = Mathf.Max(0, info.BuckPenalty);
+                catchStunSeconds = Mathf.Max(0.2f, info.CatchStunSeconds);
+                throwSpeed = Mathf.Max(1f, info.ThrowSpeed);
+                buckDumpSeconds = info.PlayMode == BrawlPlayMode.PassTheBuck
+                    ? Mathf.Max(1f, info.BuckDumpSeconds)
+                    : 30f;
+            }
+            else
+            {
+                playMode = BrawlLevelCatalog.DefaultPlayMode(currentLevelName);
+                buckPenalty = Mathf.Max(0, BuckPenalty);
+                catchStunSeconds = Mathf.Max(0.2f, CatchStunSeconds);
+                throwSpeed = Mathf.Max(1f, ThrowSpeed);
+                buckDumpSeconds = 30f;
+            }
+
             string title = BrawlLevelCatalog.GetLevelTitle(currentLevelName);
-            BrawlLevelInfo info = BrawlLevelInfo.FindInScene();
-            rulesTitle = info != null && !string.IsNullOrEmpty(info.Title)
-                ? $"{title}  {info.Title}"
-                : $"{title}  本局规则";
+            string modeTitle = info != null && !string.IsNullOrEmpty(info.Title)
+                ? info.Title
+                : playMode == BrawlPlayMode.PassTheBuck
+                    ? BrawlLevelInfo.PassTheBuckTitle
+                    : BrawlLevelInfo.HoldKpiTitle;
+            rulesTitle = $"{title}  {modeTitle}";
             rulesBody = info != null && !string.IsNullOrEmpty(info.Rules)
                 ? info.Rules
                 : DefaultRulesText();
         }
 
-        static string DefaultRulesText()
+        string DefaultRulesText()
         {
-            return
-                "抱住笔记本电脑并坚持不放，就能持续得分。\n" +
-                "被拳头打中会丢掉电脑，自己也会被打飞。\n" +
-                "先到 99 分，或时间结束时按分数排名。\n" +
-                "掉出场地会送回出生点，不会淘汰。\n\n" +
-                "WASD 移动　　空格 跳跃　　Shift 加速\n" +
-                "左键 出拳　　按住右键 抱起电脑　　松开右键 放下\n" +
-                "Esc 释放鼠标　　Alt 重新捕获鼠标\n\n" +
-                "开局有空气墙，倒计时结束后撤墙，正式开打。";
+            return playMode == BrawlPlayMode.PassTheBuck
+                ? BrawlLevelInfo.PassTheBuckRules
+                : BrawlLevelInfo.HoldKpiRules;
         }
 
         static BrawlRunRecord Record => BrawlRunRecord.Ensure(BrawlSession.Instance != null ? BrawlSession.Instance.transform : null);

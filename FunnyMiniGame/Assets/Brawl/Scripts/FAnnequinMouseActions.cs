@@ -28,7 +28,8 @@ namespace Brawl
         void Update()
         {
             bool overUi = EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
-            if (Input.GetMouseButtonDown(0) && !pickupButtonHeld && !overUi)
+            // 抱着电脑时必须按住右键，左键仍要能甩锅，所以这里不再被右键按住拦住。
+            if (Input.GetMouseButtonDown(0) && !overUi)
                 OnShortPressAttack?.Invoke();
 
             if (!LocalCameraRig.IsCursorCaptured) return;

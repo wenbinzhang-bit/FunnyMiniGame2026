@@ -24,6 +24,7 @@ namespace Brawl.EditorTools
                 if (EditorApplication.isCompiling || EditorApplication.isUpdating) return;
                 ApplyBuildSettings();
                 StripSessionFromLevelScene();
+                BrawlLevelInfoSetup.PlaceInActiveLevelIfMissing();
                 PlaceLobbyStageIfMissing();
                 if (SceneManager.GetActiveScene().name == BrawlLevelCatalog.LauncherScene
                     && GameObject.Find("TrainingGround") == null)
