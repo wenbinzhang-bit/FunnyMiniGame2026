@@ -126,6 +126,7 @@ namespace Brawl.EditorTools
                 body.mass = 20f;
                 body.constraints = RigidbodyConstraints.FreezeRotationX | RigidbodyConstraints.FreezeRotationZ;
                 body.interpolation = RigidbodyInterpolation.Interpolate;
+                body.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
                 capsule.radius = Mathf.Max(0.38f, capsule.radius);
                 capsule.enabled = true;
                 capsule.isTrigger = false;

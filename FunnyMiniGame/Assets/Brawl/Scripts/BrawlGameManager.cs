@@ -538,7 +538,7 @@ namespace Brawl
                     : null;
                 Vector3 pos = start != null ? start.position : new Vector3(i * 2f, 3f, 0f);
                 p.motor.SpawnPosition = pos;
-                p.motor.ServerTeleport(pos + Vector3.up * 1f);
+                p.motor.ServerTeleport(pos);
                 i++;
             }
         }
@@ -1449,8 +1449,7 @@ namespace Brawl
             Vector3 spawn = p.motor.SpawnPosition;
             if (spawn.sqrMagnitude < 0.01f)
                 spawn = new Vector3(0f, 3f, 0f);
-            Vector3 dest = spawn + Vector3.up * 1f;
-            p.motor.ServerTeleport(dest);
+            p.motor.ServerTeleport(spawn);
             p.motor.InputActive = state == EState.Playing || state == EState.Waiting;
         }
 

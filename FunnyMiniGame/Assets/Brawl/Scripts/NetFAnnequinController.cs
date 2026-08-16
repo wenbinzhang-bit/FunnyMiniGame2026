@@ -178,6 +178,12 @@ namespace Brawl
         const float JumpLandingMaxUpwardSpeed = 0.5f;
         const byte BtnSprint = 1;
         const byte BtnCtrl = 2;
+        const float StandingGroundSkin = 0.02f;
+        const float GroundProbeUp = 3f;
+        const float GroundProbeDistance = 8f;
+        const float GroundProbeMaxDrop = 4f;
+        const int GroundProbeMask = 1;
+        readonly RaycastHit[] groundProbeHits = new RaycastHit[16];
 
         void Awake()
         {
@@ -254,6 +260,9 @@ namespace Brawl
                 capsule.isTrigger = false;
                 if (capsule.radius < 0.38f) capsule.radius = 0.38f;
             }
+
+            ApplyContinuousCollision();
+            StartCoroutine(ServerApplyRagdollCollisionWhenReady());
 
             if (Hero != null)
                 Hero.OnMeleeHit = ServerOnHeroMeleeHit;
@@ -1378,6 +1387,8 @@ namespace Brawl
                 ERagdollChainType.Core);
             if (core == null) return false;
 
+            ApplyContinuousCollision();
+
             if (visualFallRoutine != null)
             {
                 StopCoroutine(visualFallRoutine);
@@ -1533,6 +1544,7 @@ namespace Brawl
             knockbackUntil = 0f;
 
             if (IsGrabbed) return;
+            ServerAlignStandingToGround(false, wasPhysicalRagdoll);
 
             InputActive = true;
             if (Mover) Mover.enabled = true;
@@ -1562,6 +1574,7 @@ namespace Brawl
             }
             if (gameplayCapsule != null)
                 gameplayCapsule.enabled = true;
+            ServerAlignStandingToGround(false, true);
         }
 
         [ClientRpc]
@@ -1858,12 +1871,108 @@ namespace Brawl
             if (grabber != null)
                 grabber.ServerReleaseHeldPlayer(Vector3.zero, false);
 
-            transform.position = position;
-            if (Mover && Mover.Rigb)
+            if (TryProbeGroundY(position, out float groundY))
+                position.y = groundY + StandingGroundSkin;
+            ServerApplyStandingPosition(position, true);
+        }
+
+        void ApplyContinuousCollision()
+        {
+            if (Mover != null && Mover.Rigb != null && !Mover.Rigb.isKinematic)
+                Mover.Rigb.collisionDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+
+            if (Ragdoll == null || Ragdoll.Handler == null) return;
+            Ragdoll.Handler.RigidbodiesDetectionMode = CollisionDetectionMode.ContinuousDynamic;
+            if (Ragdoll.Handler.WasInitialized)
+                Ragdoll.User_UpdateRigidbodyParametersForAllBones();
+        }
+
+        IEnumerator ServerApplyRagdollCollisionWhenReady()
+        {
+            if (Ragdoll == null) yield break;
+            float timeout = 5f;
+            while (Ragdoll != null && Ragdoll.Handler != null && !Ragdoll.Handler.WasInitialized && timeout > 0f)
             {
-                Mover.Rigb.velocity = Vector3.zero;
-                Mover.Rigb.position = position;
+                timeout -= Time.deltaTime;
+                yield return null;
             }
+
+            ApplyContinuousCollision();
+        }
+
+        [Server]
+        void ServerAlignStandingToGround(bool forceToGround, bool warpRagdoll)
+        {
+            Vector3 position = transform.position;
+            if (TryProbeGroundY(position, out float groundY))
+            {
+                float targetY = groundY + StandingGroundSkin;
+                if (forceToGround || position.y < targetY - 0.01f)
+                    position.y = targetY;
+            }
+
+            if ((position - transform.position).sqrMagnitude < 0.0001f && !warpRagdoll)
+                return;
+            ServerApplyStandingPosition(position, warpRagdoll);
+        }
+
+        [Server]
+        void ServerApplyStandingPosition(Vector3 position, bool warpRagdoll)
+        {
+            transform.position = position;
+            if (Mover != null && Mover.Rigb != null)
+            {
+                Mover.Rigb.position = position;
+                Mover.Rigb.velocity = Vector3.zero;
+                Mover.Rigb.angularVelocity = Vector3.zero;
+            }
+
+            Physics.SyncTransforms();
+            if (warpRagdoll)
+                ServerWarpRagdoll(position);
+        }
+
+        [Server]
+        void ServerWarpRagdoll(Vector3 position)
+        {
+            if (Ragdoll == null || Ragdoll.Handler == null || !Ragdoll.Handler.WasInitialized)
+                return;
+            Ragdoll.User_Teleport(position);
+            Ragdoll.User_WarpRefresh();
+        }
+
+        bool TryProbeGroundY(Vector3 from, out float groundY)
+        {
+            groundY = from.y;
+            int hitCount = Physics.RaycastNonAlloc(
+                from + Vector3.up * GroundProbeUp,
+                Vector3.down,
+                groundProbeHits,
+                GroundProbeDistance,
+                GroundProbeMask,
+                QueryTriggerInteraction.Ignore);
+            if (hitCount <= 0) return false;
+
+            bool found = false;
+            float bestY = float.NegativeInfinity;
+            for (int i = 0; i < hitCount; i++)
+            {
+                Collider hitCollider = groundProbeHits[i].collider;
+                if (hitCollider == null) continue;
+                Transform hitTransform = hitCollider.transform;
+                if (hitTransform == transform || hitTransform.IsChildOf(transform))
+                    continue;
+
+                float y = groundProbeHits[i].point.y;
+                if (y < from.y - GroundProbeMaxDrop) continue;
+                if (y <= bestY) continue;
+                bestY = y;
+                found = true;
+            }
+
+            if (!found) return false;
+            groundY = bestY;
+            return true;
         }
 
         public override void OnStopServer()
