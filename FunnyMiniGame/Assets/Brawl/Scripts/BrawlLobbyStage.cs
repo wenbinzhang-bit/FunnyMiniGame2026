@@ -4,7 +4,8 @@ using UnityEngine;
 namespace Brawl
 {
     /// <summary>
-    /// Launcher 大厅场地：没有地面或出生点时自动补一套，方便开房后走动等人。
+    /// Launcher 大厅场地标记。地面和出生点应直接放在 Launcher 场景里编辑；
+    /// 运行时只在场景缺这些物体时补一套，避免空场景掉下去。
     /// </summary>
     public sealed class BrawlLobbyStage : MonoBehaviour
     {

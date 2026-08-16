@@ -43,7 +43,7 @@ namespace Brawl
         [Min(1)] public int HudScoreMax = 99;
 
         [Tooltip("进场后空气墙持续时间，倒计时结束且人数足够后开局并撤墙")]
-        [Min(1f)] public float WaitingDurationSeconds = 10f;
+        [Min(1f)] public float WaitingDurationSeconds = 5f;
 
         [Tooltip("每局开局前规则说明显示秒数，到时自动消失并进入准备")]
         [Min(1f)] public float RulesDurationSeconds = 6f;
@@ -73,10 +73,12 @@ namespace Brawl
         public bool HudAirWallActive => airWallActive;
         public bool HudContinueRequested => nextRoundRequested;
         public bool HudIsHost => NetworkServer.active;
-        public bool HudShowLobbyActions =>
-            BrawlLevelCatalog.ActiveSceneIsLauncher()
-            && state == EState.Lobby
-            && !changingScene;
+        public bool HudShowLobbyActions => ServerCanAcceptLobbyReady();
+
+        public bool ServerCanAcceptLobbyReady()
+        {
+            return state == EState.Lobby && !changingScene;
+        }
         public bool HudLobbyAllReady => lobbyAllReady;
         public string HudStatusText => statusText;
         public string HudLobbyReadyLine => lobbyReadyLine;
@@ -249,6 +251,9 @@ namespace Brawl
         void Update()
         {
             if (!NetworkServer.active) return;
+
+            if (changingScene)
+                RecoverStuckSceneChange();
 
             if (TryOpenArrivedLevel())
                 return;
@@ -465,6 +470,7 @@ namespace Brawl
         [Server]
         void ServerUpdateLobby()
         {
+            ServerRebuildPlayers();
             foreach (var p in players)
             {
                 ServerRescueIfNeeded(p);
@@ -689,7 +695,7 @@ namespace Brawl
             }
 
             float remain = Mathf.Max(0f, (float)(waitingEndsAt - NetworkTime.time));
-            statusText = $"空气墙倒计时 {FormatTime(remain)} 后正式开始  玩家 {CountHumanPlayers()}";
+            statusText = $"空气墙等待中，结束后正式开始  玩家 {CountHumanPlayers()}";
 
             if (remain <= 0f)
             {
@@ -732,9 +738,7 @@ namespace Brawl
         {
             if (!HudShowLobbyActions) return;
 
-            NetFAnnequinController local = NetworkClient.localPlayer != null
-                ? NetworkClient.localPlayer.GetComponent<NetFAnnequinController>()
-                : null;
+            NetFAnnequinController local = LocalLobbyPlayer();
             if (local != null)
                 local.CmdSetLobbyReady(true);
 
@@ -752,6 +756,7 @@ namespace Brawl
         public void ServerTryStartFromLobby()
         {
             if (state != EState.Lobby || changingScene) return;
+            ServerRebuildPlayers();
             BrawlLobbyReady.Tally tally = TallyLobbyReady();
             lobbyReadyLine = tally.Line;
             lobbyAllReady = tally.CanEnterFirstLevel(MinPlayersToStart);
@@ -767,19 +772,33 @@ namespace Brawl
         public void RequestLobbyReadyToggle()
         {
             if (!HudShowLobbyActions) return;
-            NetFAnnequinController local = NetworkClient.localPlayer != null
-                ? NetworkClient.localPlayer.GetComponent<NetFAnnequinController>()
-                : null;
+            NetFAnnequinController local = LocalLobbyPlayer();
             if (local == null) return;
             local.CmdSetLobbyReady(!local.LobbyReady);
         }
 
         public bool HudLocalIsReady()
         {
-            NetFAnnequinController local = NetworkClient.localPlayer != null
-                ? NetworkClient.localPlayer.GetComponent<NetFAnnequinController>()
-                : null;
+            NetFAnnequinController local = LocalLobbyPlayer();
             return local != null && local.LobbyReady;
+        }
+
+        static NetFAnnequinController LocalLobbyPlayer()
+        {
+            if (NetworkClient.localPlayer != null)
+            {
+                NetFAnnequinController fromIdentity = NetworkClient.localPlayer.GetComponent<NetFAnnequinController>();
+                if (fromIdentity != null)
+                    return fromIdentity;
+            }
+
+            foreach (NetFAnnequinController fan in FindObjectsOfType<NetFAnnequinController>())
+            {
+                if (fan != null && fan.isLocalPlayer)
+                    return fan;
+            }
+
+            return null;
         }
 
         public void DebugSetRemainingSeconds(float seconds)
@@ -1150,15 +1169,24 @@ namespace Brawl
         void ServerRebuildPlayers()
         {
             PurgeDeadPlayers();
+            foreach (var pair in NetworkServer.connections)
+            {
+                NetworkConnectionToClient conn = pair.Value;
+                if (conn?.identity == null) continue;
+                ServerOnPlayerJoined(conn);
+            }
+
             foreach (NetFAnnequinController fan in FindObjectsOfType<NetFAnnequinController>())
             {
-                if (fan == null) continue;
+                if (fan == null || fan.netId == 0) continue;
                 if (players.Exists(p => p.motor == fan)) continue;
+                if (fan.connectionToClient != null)
+                {
+                    ServerOnPlayerJoined(fan.connectionToClient);
+                    continue;
+                }
 
-                NetworkConnectionToClient conn = fan.connectionToClient;
-                if (conn != null)
-                    ServerOnPlayerJoined(conn);
-                else
+                if (fan.GetComponent<BrawlBotBrain>() != null)
                     ServerOnBotJoined(fan);
             }
         }
@@ -1358,10 +1386,22 @@ namespace Brawl
         BrawlLobbyReady.Tally TallyLobbyReady()
         {
             var tally = new BrawlLobbyReady.Tally();
+            var counted = new HashSet<NetFAnnequinController>();
+
+            foreach (var pair in NetworkServer.connections)
+            {
+                NetworkConnectionToClient conn = pair.Value;
+                if (conn?.identity == null) continue;
+                NetFAnnequinController fan = conn.identity.GetComponent<NetFAnnequinController>();
+                if (fan == null || !counted.Add(fan)) continue;
+                tally.Add(true, false, fan.LobbyReady);
+            }
+
             foreach (var p in players)
             {
-                bool ready = p?.motor is NetFAnnequinController fan && fan.LobbyReady;
-                tally.Add(p?.motor != null, !IsHumanPlayer(p), ready);
+                if (IsHumanPlayer(p)) continue;
+                if (p?.motor is NetFAnnequinController fan && counted.Add(fan))
+                    tally.Add(true, true, true);
             }
 
             return tally;

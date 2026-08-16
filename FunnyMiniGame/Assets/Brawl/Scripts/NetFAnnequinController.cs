@@ -734,9 +734,12 @@ namespace Brawl
         [Command]
         public void CmdSetLobbyReady(bool ready)
         {
-            if (BrawlGameManager.Instance == null || !BrawlGameManager.Instance.HudIsLobby)
+            BrawlGameManager gm = BrawlGameManager.Instance;
+            if (gm == null || !gm.ServerCanAcceptLobbyReady())
                 return;
             LobbyReady = ready;
+            if (ready)
+                gm.ServerTryStartFromLobby();
         }
 
         [Command]

@@ -11,6 +11,7 @@ namespace Brawl
     /// 血量玩法已移除，旧 Prefab 中残留的 Health 节点会在启动时隐藏。
     /// </summary>
     [DefaultExecutionOrder(100)]
+    [ExecuteAlways]
     public sealed class BrawlMatchHud : MonoBehaviour
     {
         const int ScoreBarMaxFallback = 99;
@@ -85,21 +86,55 @@ namespace Brawl
         void Awake()
         {
             HideLegacyHealthUi();
+            EnsureSceneHudWidgets();
+            ApplyCjkFont();
+            CacheTimerVisuals();
+            EnsureBeepSource();
+            if (Application.isPlaying && RankingRoot != null)
+                RankingRoot.SetActive(false);
+        }
+
+        void OnEnable()
+        {
+            EnsureSceneHudWidgets();
+            if (!Application.isPlaying)
+                ShowEditorPreviewWidgets();
+        }
+
+        void EnsureSceneHudWidgets()
+        {
             EnsureTurboVisuals();
             EnsureCursorHint();
             EnsureNextRoundButton();
             EnsureLobbyButton();
             EnsureRulesPanel();
             EnsureDebugTimerButton();
-            ApplyCjkFont();
-            CacheTimerVisuals();
-            EnsureBeepSource();
+        }
+
+        void ShowEditorPreviewWidgets()
+        {
             if (RankingRoot != null)
-                RankingRoot.SetActive(false);
+                RankingRoot.SetActive(true);
+            if (NextRoundButton != null)
+                NextRoundButton.gameObject.SetActive(true);
+            if (LobbyButton != null)
+                LobbyButton.gameObject.SetActive(true);
+            if (LobbyStartButton != null)
+                LobbyStartButton.gameObject.SetActive(true);
+            if (RulesRoot != null)
+                RulesRoot.SetActive(true);
+            if (DebugTimerButton != null)
+                DebugTimerButton.gameObject.SetActive(true);
         }
 
         void LateUpdate()
         {
+            if (!Application.isPlaying)
+            {
+                ShowEditorPreviewWidgets();
+                return;
+            }
+
             BrawlMatchHud keep = SessionHud();
             if (keep != null && keep != this)
             {
@@ -203,7 +238,7 @@ namespace Brawl
                     StatusText.text = $"请阅读{gm.HudRulesTitle}，{Mathf.CeilToInt(remaining)} 秒后开始";
                 else if (gm != null && gm.HudIsWaiting)
                     StatusText.text = string.IsNullOrEmpty(gm.HudStatusText)
-                        ? $"空气墙倒计时 {FormatTime(remaining)} 后正式开始"
+                        ? "空气墙等待中，结束后正式开始"
                         : TrimStatus(gm.HudStatusText);
                 else if (gm != null && gm.HudIsFinalKpi)
                     StatusText.text = "2 关全部结束，这是整场 KPI 汇总";
@@ -625,31 +660,25 @@ namespace Brawl
                 ? TimerText.font
                 : Resources.GetBuiltinResource<Font>("Arial.ttf");
 
-            if (LobbyButton == null || LobbyLabel == null)
-            {
-                BindOrCreateLobbyButton(
-                    "LobbyAction",
-                    new Vector2(-130f, -150f),
-                    new Color(0.18f, 0.55f, 0.92f, 0.96f),
-                    "准备 Ready",
-                    OnLobbyReadyClicked,
-                    fallbackFont,
-                    out LobbyButton,
-                    out LobbyLabel);
-            }
+            BindOrCreateLobbyButton(
+                "LobbyAction",
+                new Vector2(-130f, -150f),
+                new Color(0.18f, 0.55f, 0.92f, 0.96f),
+                "准备 Ready",
+                OnLobbyReadyClicked,
+                fallbackFont,
+                ref LobbyButton,
+                ref LobbyLabel);
 
-            if (LobbyStartButton == null || LobbyStartLabel == null)
-            {
-                BindOrCreateLobbyButton(
-                    "LobbyStart",
-                    new Vector2(130f, -150f),
-                    new Color(0.16f, 0.72f, 0.38f, 0.96f),
-                    "开始游戏",
-                    OnLobbyStartClicked,
-                    fallbackFont,
-                    out LobbyStartButton,
-                    out LobbyStartLabel);
-            }
+            BindOrCreateLobbyButton(
+                "LobbyStart",
+                new Vector2(130f, -150f),
+                new Color(0.16f, 0.72f, 0.38f, 0.96f),
+                "开始游戏",
+                OnLobbyStartClicked,
+                fallbackFont,
+                ref LobbyStartButton,
+                ref LobbyStartLabel);
         }
 
         void BindOrCreateLobbyButton(
@@ -659,11 +688,16 @@ namespace Brawl
             string text,
             UnityEngine.Events.UnityAction onClick,
             Font font,
-            out Button button,
-            out Text label)
+            ref Button button,
+            ref Text label)
         {
-            button = null;
-            label = null;
+            if (button != null && label != null)
+            {
+                button.onClick.RemoveListener(onClick);
+                button.onClick.AddListener(onClick);
+                return;
+            }
+
             Transform existing = transform.Find(name);
             if (existing != null)
             {

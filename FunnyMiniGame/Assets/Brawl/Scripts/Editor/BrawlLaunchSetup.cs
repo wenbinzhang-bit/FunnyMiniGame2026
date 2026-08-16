@@ -1,4 +1,5 @@
 using Brawl;
+using Mirror;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -23,6 +24,7 @@ namespace Brawl.EditorTools
                 if (EditorApplication.isCompiling || EditorApplication.isUpdating) return;
                 ApplyBuildSettings();
                 StripSessionFromLevelScene();
+                PlaceLobbyStageIfMissing();
             };
         }
 
@@ -93,6 +95,63 @@ namespace Brawl.EditorTools
             EditorSceneManager.MarkSceneDirty(scene);
             EditorSceneManager.SaveScene(scene);
             Debug.Log("BRAWL_LAUNCH: 已从关卡场景移除常驻网络节点，改由 Launcher / BrawlSession 提供。");
+        }
+
+        static void PlaceLobbyStageIfMissing()
+        {
+            Scene scene = SceneManager.GetActiveScene();
+            if (scene.name != BrawlLevelCatalog.LauncherScene) return;
+            if (GameObject.Find("LobbyGround") != null && Object.FindObjectOfType<NetworkStartPosition>() != null)
+                return;
+
+            Material groundMat = AssetDatabase.LoadAssetAtPath<Material>("Assets/Brawl/Materials/LobbyGround.mat");
+            Transform root = null;
+            BrawlLobbyStage stage = Object.FindObjectOfType<BrawlLobbyStage>();
+            if (stage != null)
+                root = stage.transform;
+            else
+            {
+                var go = new GameObject("LobbyStage");
+                Undo.RegisterCreatedObjectUndo(go, "Create LobbyStage");
+                go.AddComponent<BrawlLobbyStage>();
+                root = go.transform;
+            }
+
+            if (GameObject.Find("LobbyGround") == null)
+            {
+                GameObject ground = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                Undo.RegisterCreatedObjectUndo(ground, "Create LobbyGround");
+                ground.name = "LobbyGround";
+                ground.transform.SetParent(root, false);
+                ground.transform.localPosition = new Vector3(0f, -0.5f, 0f);
+                ground.transform.localScale = new Vector3(36f, 1f, 36f);
+                var renderer = ground.GetComponent<Renderer>();
+                if (renderer != null && groundMat != null)
+                    renderer.sharedMaterial = groundMat;
+            }
+
+            if (Object.FindObjectOfType<NetworkStartPosition>() == null)
+            {
+                Vector3[] spots =
+                {
+                    new Vector3(4f, 1.4f, 4f),
+                    new Vector3(-4f, 1.4f, -4f),
+                    new Vector3(-4f, 1.4f, 4f),
+                    new Vector3(4f, 1.4f, -4f)
+                };
+                for (int i = 0; i < spots.Length; i++)
+                {
+                    var spawn = new GameObject("Spawn_" + (i + 1));
+                    Undo.RegisterCreatedObjectUndo(spawn, "Create Lobby Spawn");
+                    spawn.transform.SetParent(root, false);
+                    spawn.transform.localPosition = spots[i];
+                    spawn.AddComponent<NetworkStartPosition>();
+                }
+            }
+
+            EditorSceneManager.MarkSceneDirty(scene);
+            EditorSceneManager.SaveScene(scene);
+            Debug.Log("BRAWL_LAUNCH: 已把大厅地面和出生点放进 Launcher 场景，可直接在 Hierarchy 里改。");
         }
 
         static bool DestroyAll<T>() where T : Component

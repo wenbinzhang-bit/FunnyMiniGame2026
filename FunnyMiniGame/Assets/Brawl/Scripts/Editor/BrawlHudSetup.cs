@@ -29,7 +29,8 @@ namespace Brawl.EditorTools
             {
                 if (EditorApplication.isPlayingOrWillChangePlaymode) return;
                 if (EditorApplication.isCompiling || EditorApplication.isUpdating) return;
-                if (SceneManager.GetActiveScene().name != "MiniGame_01") return;
+                string sceneName = SceneManager.GetActiveScene().name;
+                if (sceneName != BrawlLevelCatalog.LauncherScene) return;
                 if (Object.FindObjectOfType<BrawlMatchHud>() != null) return;
                 Canvas canvas = Object.FindObjectOfType<Canvas>();
                 if (canvas == null) return;

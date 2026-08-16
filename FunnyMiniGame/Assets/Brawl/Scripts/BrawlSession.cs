@@ -47,6 +47,7 @@ namespace Brawl
             ConfigureNetworkManager();
             AdoptLooseObjects();
             BindScene();
+            BindHudCanvas();
             BrawlLobbyStage.Ensure();
         }
 
@@ -76,6 +77,7 @@ namespace Brawl
             if (Instance != this) return;
             DestroyLooseDuplicates();
             BindScene();
+            BindHudCanvas();
             BrawlLobbyStage.Ensure();
             BrawlMatchHud hud = GetComponentInChildren<BrawlMatchHud>(true);
             if (hud != null && !hud.gameObject.activeSelf)
@@ -211,6 +213,25 @@ namespace Brawl
             root = go.transform;
             root.SetParent(transform, false);
             return root;
+        }
+
+        void BindHudCanvas()
+        {
+            Canvas canvas = GetComponentInChildren<Canvas>(true);
+            if (canvas == null) return;
+
+            if (Application.isPlaying)
+            {
+                canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                canvas.worldCamera = null;
+                return;
+            }
+
+            canvas.renderMode = RenderMode.ScreenSpaceCamera;
+            canvas.worldCamera = Camera.main;
+            canvas.planeDistance = 2f;
+            if (canvas.transform.localScale.sqrMagnitude < 0.01f)
+                canvas.transform.localScale = Vector3.one;
         }
 
         public void BindScene()
