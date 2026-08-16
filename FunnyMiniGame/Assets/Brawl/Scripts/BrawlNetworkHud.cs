@@ -5,29 +5,32 @@ using UnityEngine.UI;
 namespace Brawl
 {
     /// <summary>
-    /// 替换 Mirror 默认 IMGUI 联机条：左下角卡片，按钮和提示与对局 HUD 同一套风格。
+    /// 替换 Mirror 默认 IMGUI 联机条：未连接时显示复古电脑封面与左下角大厅卡片。
     /// </summary>
     [DefaultExecutionOrder(40)]
     public sealed class BrawlNetworkHud : MonoBehaviour
     {
-        const float PanelWidth = 372f;
-        const float DisconnectedHeight = 428f;
-        const float ConnectedHeight = 124f;
-        const float ConnectingHeight = 132f;
+        const float PanelWidth = 438f;
+        const float ConnectedWidth = 360f;
+        const float DisconnectedHeight = 452f;
+        const float ConnectedHeight = 128f;
+        const float ConnectingHeight = 164f;
 
-        static readonly Color PanelColor = new Color(0.05f, 0.06f, 0.08f, 0.88f);
-        static readonly Color AccentColor = new Color(1f, 0.84f, 0.28f, 1f);
-        static readonly Color HostColor = new Color(0.16f, 0.72f, 0.38f, 0.96f);
-        static readonly Color JoinColor = new Color(0.28f, 0.62f, 0.92f, 0.96f);
-        static readonly Color ServerColor = new Color(0.28f, 0.30f, 0.34f, 0.96f);
+        static readonly Color PanelColor = new Color(0.16f, 0.17f, 0.18f, 0.96f);
+        static readonly Color PanelFrameColor = new Color(0.58f, 0.57f, 0.52f, 0.98f);
+        static readonly Color TitleBarColor = new Color(0.035f, 0.055f, 0.30f, 1f);
+        static readonly Color HostColor = new Color(0.76f, 0.60f, 0.02f, 1f);
+        static readonly Color JoinColor = new Color(0.10f, 0.48f, 0.78f, 1f);
+        static readonly Color ServerColor = new Color(0.30f, 0.31f, 0.31f, 1f);
         static readonly Color StopColor = new Color(0.82f, 0.24f, 0.22f, 0.96f);
         static readonly Color FieldColor = new Color(0.12f, 0.13f, 0.16f, 0.96f);
-        static readonly Color HintColor = new Color(0.86f, 0.88f, 0.90f, 0.78f);
+        static readonly Color HintColor = new Color(0.93f, 0.94f, 0.95f, 0.95f);
         static readonly Color IdleDot = new Color(0.62f, 0.64f, 0.68f, 1f);
         static readonly Color LiveDot = new Color(0.28f, 0.86f, 0.46f, 1f);
         static readonly Color WaitDot = new Color(1f, 0.78f, 0.22f, 1f);
 
         RectTransform panel;
+        GameObject backgroundRoot;
         GameObject disconnectedRoot;
         GameObject connectingRoot;
         GameObject connectedRoot;
@@ -37,7 +40,6 @@ namespace Brawl
         InputField nameField;
         InputField addressField;
         InputField portField;
-        Text botValue;
         Text connectingLabel;
         Text emptyListText;
         RectTransform serverListContent;
@@ -47,6 +49,8 @@ namespace Brawl
         NetworkManager manager;
         BrawlServerDiscovery discovery;
         string lastListFingerprint;
+        string transientHint;
+        float transientHintUntil;
 
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         static void Boot()
@@ -81,7 +85,15 @@ namespace Brawl
         {
             HideDefaultMirrorHud();
             manager = NetworkManager.singleton;
-            if (manager == null || panel == null) return;
+            if (panel == null) return;
+
+            // 联机大厅只属于 Launcher：进入第一关后，规则、等待、对局和结算阶段均不再展示。
+            bool showLobby = BrawlLevelCatalog.ActiveSceneIsLauncher();
+            panel.gameObject.SetActive(showLobby);
+            if (backgroundRoot != null && !showLobby)
+                backgroundRoot.SetActive(false);
+            if (!showLobby || manager == null)
+                return;
 
             bool server = NetworkServer.active;
             bool client = NetworkClient.isConnected;
@@ -90,13 +102,14 @@ namespace Brawl
             disconnectedRoot.SetActive(!server && !client && !connecting);
             connectingRoot.SetActive(connecting);
             connectedRoot.SetActive(server || client);
+            if (backgroundRoot != null)
+                backgroundRoot.SetActive(!server && !client);
 
             float height = connecting ? ConnectingHeight : server || client ? ConnectedHeight : DisconnectedHeight;
-            panel.sizeDelta = new Vector2(PanelWidth, height);
+            float width = server || client ? ConnectedWidth : PanelWidth;
+            panel.sizeDelta = new Vector2(width, height);
 
-            if (addressField != null && !addressField.isFocused)
-                addressField.text = string.IsNullOrEmpty(manager.networkAddress) ? "localhost" : manager.networkAddress;
-            else if (addressField != null)
+            if (addressField != null && addressField.isFocused)
                 manager.networkAddress = addressField.text.Trim();
 
             if (Transport.active is PortTransport portTransport)
@@ -136,13 +149,6 @@ namespace Brawl
                 RefreshServerList();
             }
 
-            if (botValue != null)
-            {
-                botValue.text = BrawlBotLobby.Instance != null
-                    ? BrawlBotLobby.Instance.BotCount.ToString()
-                    : "0";
-            }
-
             if (stopHostButton != null)
                 stopHostButton.gameObject.SetActive(server && client);
             if (stopClientButton != null)
@@ -168,6 +174,11 @@ namespace Brawl
 
         void BindHeader(string status, Color dot, string hint)
         {
+            if (status == "未连接" && Time.unscaledTime < transientHintUntil && !string.IsNullOrEmpty(transientHint))
+                hint = transientHint;
+            else if (Time.unscaledTime >= transientHintUntil)
+                transientHint = null;
+
             statusDot.color = dot;
             statusText.text = status;
             statusText.color = status == "未连接" ? HintColor : dot;
@@ -190,13 +201,27 @@ namespace Brawl
         {
             if (manager == null) return;
             ApplyRoomName();
+            // Bot 已移动到准备区，创建房间时不再自动生成。
+            if (manager is BrawlNetworkManager brawlManager)
+                brawlManager.PendingBotCount = BrawlBotLobby.Instance != null ? BrawlBotLobby.Instance.BotCount : 0;
             manager.StartHost();
         }
 
         void OnJoin()
         {
             if (manager == null || addressField == null) return;
-            manager.networkAddress = addressField.text.Trim();
+            string address = addressField.text.Trim();
+            if (string.IsNullOrWhiteSpace(address))
+            {
+                transientHint = "请输入房主的IP地址";
+                transientHintUntil = Time.unscaledTime + 2.5f;
+                BindHeader("未连接", WaitDot, transientHint);
+                addressField.ActivateInputField();
+                return;
+            }
+
+            transientHint = null;
+            manager.networkAddress = address;
             if (discovery != null)
                 discovery.StopDiscovery();
             manager.StartClient();
@@ -287,10 +312,10 @@ namespace Brawl
         void CreateServerRow(BrawlFoundServer server)
         {
             BrawlFoundServer captured = server;
-            Button row = CreateButton(serverListContent, "Server_" + server.ServerId, "", JoinColor, 15);
+            Button row = CreateButton(serverListContent, "Server_" + server.ServerId, "", JoinColor, 16);
             var layout = row.gameObject.AddComponent<LayoutElement>();
-            layout.minHeight = 34f;
-            layout.preferredHeight = 34f;
+            layout.minHeight = 38f;
+            layout.preferredHeight = 38f;
             row.onClick.AddListener(() => OnJoinFound(captured));
 
             Text name = row.GetComponentInChildren<Text>();
@@ -302,7 +327,7 @@ namespace Brawl
                 name.text = string.IsNullOrEmpty(server.ServerName) ? server.Address : server.ServerName;
             }
 
-            Text meta = CreateText(row.transform, "Meta", 12, FontStyle.Normal, TextAnchor.MiddleRight, HintColor);
+            Text meta = CreateText(row.transform, "Meta", 14, FontStyle.Normal, TextAnchor.MiddleRight, HintColor);
             Stretch(meta.rectTransform);
             meta.rectTransform.offsetMin = new Vector2(0f, 0f);
             meta.rectTransform.offsetMax = new Vector2(-10f, 0f);
@@ -328,18 +353,6 @@ namespace Brawl
         void OnCancel()
         {
             if (manager != null) manager.StopClient();
-        }
-
-        void OnBotMinus()
-        {
-            if (BrawlBotLobby.Instance != null)
-                BrawlBotLobby.Instance.Adjust(-1);
-        }
-
-        void OnBotPlus()
-        {
-            if (BrawlBotLobby.Instance != null)
-                BrawlBotLobby.Instance.Adjust(1);
         }
 
         static void HideDefaultMirrorHud()
@@ -369,33 +382,60 @@ namespace Brawl
             scaler.referenceResolution = new Vector2(1920f, 1080f);
             scaler.matchWidthOrHeight = 1f;
 
+            backgroundRoot = CreateGroup(canvasObject.transform, "LobbyBackdrop");
+            Image blackBackdrop = backgroundRoot.AddComponent<Image>();
+            blackBackdrop.color = Color.black;
+            blackBackdrop.raycastTarget = false;
+
+            RectTransform artworkRect = CreateRect(backgroundRoot.transform, "Artwork", new Vector2(0.5f, 0.5f),
+                new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(1920f, 1080f));
+            RawImage artwork = artworkRect.gameObject.AddComponent<RawImage>();
+            artwork.texture = Resources.Load<Texture2D>("UI/NetworkLobby/MainMenuBackground");
+            artwork.color = Color.white;
+            artwork.raycastTarget = false;
+            AspectRatioFitter artworkFitter = artworkRect.gameObject.AddComponent<AspectRatioFitter>();
+            artworkFitter.aspectMode = AspectRatioFitter.AspectMode.EnvelopeParent;
+            artworkFitter.aspectRatio = artwork.texture != null
+                ? artwork.texture.width / (float)artwork.texture.height
+                : 16f / 9f;
+
+            Image artworkShade = CreateImage(backgroundRoot.transform, "ReadabilityShade", new Color(0f, 0f, 0f, 0.035f), false);
+            Stretch(artworkShade.rectTransform);
+
             panel = CreateRect(canvasObject.transform, "Panel", new Vector2(0f, 0f), new Vector2(0f, 0f), new Vector2(0f, 0f),
-                new Vector2(20f, 18f), new Vector2(PanelWidth, DisconnectedHeight));
+                new Vector2(24f, 22f), new Vector2(PanelWidth, DisconnectedHeight));
             Image panelImage = panel.gameObject.AddComponent<Image>();
-            panelImage.color = PanelColor;
+            panelImage.color = PanelFrameColor;
             panelImage.raycastTarget = true;
 
-            Image accent = CreateImage(panel, "Accent", AccentColor, false);
-            SetRect(accent.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(0f, 0f), new Vector2(0f, 4f));
+            Image panelSurface = CreateImage(panel, "Surface", PanelColor, false);
+            Stretch(panelSurface.rectTransform);
+            panelSurface.rectTransform.offsetMin = new Vector2(5f, 5f);
+            panelSurface.rectTransform.offsetMax = new Vector2(-5f, -5f);
+            AddBevel(panel, true);
 
-            Text titleText = CreateText(panel, "Title", 22, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
+            Image titleBar = CreateImage(panel, "TitleBar", TitleBarColor, false);
+            SetRect(titleBar.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
+                new Vector2(0f, -7f), new Vector2(-14f, 36f));
+            AddBevel(titleBar.rectTransform, false);
+
+            Text titleText = CreateText(panel, "Title", 24, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
             SetRect(titleText.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f),
-                new Vector2(16f, -12f), new Vector2(-150f, 28f));
+                new Vector2(18f, -10f), new Vector2(-170f, 28f));
             titleText.text = "联机大厅";
 
             statusDot = CreateImage(panel, "StatusDot", IdleDot, false);
             SetRect(statusDot.rectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
-                new Vector2(-86f, -18f), new Vector2(10f, 10f));
+                new Vector2(-100f, -20f), new Vector2(10f, 10f));
 
-            statusText = CreateText(panel, "Status", 15, FontStyle.Bold, TextAnchor.MiddleRight, HintColor);
+            statusText = CreateText(panel, "Status", 17, FontStyle.Bold, TextAnchor.MiddleRight, HintColor);
             SetRect(statusText.rectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
-                new Vector2(-16f, -12f), new Vector2(66f, 24f));
+                new Vector2(-18f, -12f), new Vector2(76f, 24f));
             statusText.text = "未连接";
 
-            hintText = CreateText(panel, "Hint", 14, FontStyle.Normal, TextAnchor.UpperLeft, HintColor);
+            hintText = CreateText(panel, "Hint", 16, FontStyle.Normal, TextAnchor.UpperLeft, HintColor);
             SetRect(hintText.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f),
-                new Vector2(16f, -42f), new Vector2(-32f, 36f));
+                new Vector2(18f, -49f), new Vector2(-36f, 34f));
             hintText.text = "同一局域网会自动列出房间，点一项即可加入";
             hintText.horizontalOverflow = HorizontalWrapMode.Wrap;
             hintText.verticalOverflow = VerticalWrapMode.Overflow;
@@ -406,41 +446,37 @@ namespace Brawl
             connectingRoot.SetActive(false);
             connectedRoot.SetActive(false);
 
-            Text nameLabel = CreateText(disconnectedRoot.transform, "NameLabel", 15, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
+            Text nameLabel = CreateText(disconnectedRoot.transform, "NameLabel", 17, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
             SetRect(nameLabel.rectTransform, new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(0f, 1f),
-                new Vector2(16f, -86f), new Vector2(56f, 36f));
+                new Vector2(18f, -90f), new Vector2(58f, 36f));
             nameLabel.text = "名称";
 
             nameField = CreateField(disconnectedRoot.transform, "RoomName", BrawlServerDiscovery.DefaultServerName());
             nameField.characterLimit = 16;
             SetRect(nameField.transform as RectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(36f, -86f), new Vector2(-88f, 36f));
+                new Vector2(38f, -90f), new Vector2(-94f, 36f));
 
-            Button host = CreateButton(disconnectedRoot.transform, "Host", "开房间", HostColor, 18);
-            SetRect(host.transform as RectTransform, new Vector2(0f, 1f), new Vector2(0.68f, 1f), new Vector2(0f, 1f),
-                new Vector2(16f, -128f), new Vector2(-8f, 38f));
+            Button host = CreateButton(disconnectedRoot.transform, "Host", "创建房间", HostColor, 20);
+            SetRect(host.transform as RectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
+                new Vector2(0f, -132f), new Vector2(-36f, 40f));
             host.onClick.AddListener(OnHost);
 
-            Button server = CreateButton(disconnectedRoot.transform, "Server", "仅服务器", ServerColor, 14);
-            SetRect(server.transform as RectTransform, new Vector2(0.68f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
-                new Vector2(-16f, -128f), new Vector2(0f, 38f));
-            server.onClick.AddListener(OnServerOnly);
-
-            Text listLabel = CreateText(disconnectedRoot.transform, "ListLabel", 15, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
+            Text listLabel = CreateText(disconnectedRoot.transform, "ListLabel", 17, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
             SetRect(listLabel.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f),
-                new Vector2(16f, -172f), new Vector2(-110f, 24f));
+                new Vector2(18f, -182f), new Vector2(-124f, 26f));
             listLabel.text = "局域网房间";
 
-            Button refresh = CreateButton(disconnectedRoot.transform, "Refresh", "刷新", ServerColor, 14);
+            Button refresh = CreateButton(disconnectedRoot.transform, "Refresh", "刷新", ServerColor, 16);
             SetRect(refresh.transform as RectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
-                new Vector2(-16f, -170f), new Vector2(64f, 26f));
+                new Vector2(-18f, -178f), new Vector2(70f, 28f));
             refresh.onClick.AddListener(OnRefreshList);
 
             RectTransform listRoot = CreateRect(disconnectedRoot.transform, "ServerList", new Vector2(0f, 1f), new Vector2(1f, 1f),
-                new Vector2(0.5f, 1f), new Vector2(0f, -198f), new Vector2(-32f, 148f));
+                new Vector2(0.5f, 1f), new Vector2(0f, -208f), new Vector2(-36f, 150f));
             Image listBg = listRoot.gameObject.AddComponent<Image>();
             listBg.color = FieldColor;
             listBg.raycastTarget = true;
+            AddBevel(listRoot, false);
             listRoot.gameObject.AddComponent<RectMask2D>();
             ScrollRect scroll = listRoot.gameObject.AddComponent<ScrollRect>();
             scroll.horizontal = false;
@@ -464,71 +500,52 @@ namespace Brawl
             fitter.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
             scroll.content = serverListContent;
 
-            emptyListText = CreateText(listRoot, "Empty", 14, FontStyle.Normal, TextAnchor.MiddleCenter, HintColor);
+            emptyListText = CreateText(listRoot, "Empty", 16, FontStyle.Normal, TextAnchor.MiddleCenter, HintColor);
             Stretch(emptyListText.rectTransform);
             emptyListText.text = "正在搜索局域网房间…";
 
             RectTransform joinRow = CreateRect(disconnectedRoot.transform, "JoinRow", new Vector2(0f, 1f), new Vector2(1f, 1f),
-                new Vector2(0.5f, 1f), new Vector2(0f, -354f), new Vector2(-32f, 36f));
-            Button join = CreateButton(joinRow, "Join", "手动加入", JoinColor, 14);
+                new Vector2(0.5f, 1f), new Vector2(0f, -370f), new Vector2(-36f, 40f));
+            Button join = CreateButton(joinRow, "Join", "手动输入", HostColor, 17);
             SetRect(join.transform as RectTransform, new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(0f, 0.5f),
-                new Vector2(0f, 0f), new Vector2(88f, 0f));
+                new Vector2(0f, 0f), new Vector2(100f, 0f));
             join.onClick.AddListener(OnJoin);
 
-            addressField = CreateField(joinRow, "Address", "localhost");
+            addressField = CreateField(joinRow, "Address", "", "房主的IP地址");
             RectTransform addressRect = addressField.transform as RectTransform;
             addressRect.anchorMin = Vector2.zero;
             addressRect.anchorMax = Vector2.one;
             addressRect.pivot = new Vector2(0.5f, 0.5f);
-            addressRect.offsetMin = new Vector2(94f, 0f);
-            addressRect.offsetMax = new Vector2(-62f, 0f);
+            addressRect.offsetMin = new Vector2(106f, 0f);
+            addressRect.offsetMax = new Vector2(-70f, 0f);
 
             portField = CreateField(joinRow, "Port", "7777");
             portField.contentType = InputField.ContentType.IntegerNumber;
             portField.characterLimit = 5;
             SetRect(portField.transform as RectTransform, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(1f, 0.5f),
-                new Vector2(0f, 0f), new Vector2(56f, 0f));
+                new Vector2(0f, 0f), new Vector2(64f, 0f));
 
-            Image divider = CreateImage(disconnectedRoot.transform, "Divider", new Color(1f, 1f, 1f, 0.08f), false);
-            SetRect(divider.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
-                new Vector2(0f, -398f), new Vector2(-32f, 1f));
+            Text footer = CreateText(disconnectedRoot.transform, "Footer", 15, FontStyle.Bold, TextAnchor.MiddleLeft, HintColor);
+            SetRect(footer.rectTransform, new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0f, 0f),
+                new Vector2(18f, 12f), new Vector2(-36f, 24f));
+            footer.text = "OFFICE LAN  ·  99？66？996！！！";
 
-            Text botLabel = CreateText(disconnectedRoot.transform, "BotLabel", 15, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
-            SetRect(botLabel.rectTransform, new Vector2(0f, 1f), new Vector2(0.5f, 1f), new Vector2(0f, 1f),
-                new Vector2(16f, -406f), new Vector2(120f, 32f));
-            botLabel.text = "开房 Bot";
-
-            Button minus = CreateButton(disconnectedRoot.transform, "BotMinus", "-", ServerColor, 20);
-            SetRect(minus.transform as RectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
-                new Vector2(-118f, -406f), new Vector2(32f, 32f));
-            minus.onClick.AddListener(OnBotMinus);
-
-            botValue = CreateText(disconnectedRoot.transform, "BotValue", 18, FontStyle.Bold, TextAnchor.MiddleCenter, AccentColor);
-            SetRect(botValue.rectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
-                new Vector2(-72f, -406f), new Vector2(40f, 32f));
-            botValue.text = "1";
-
-            Button plus = CreateButton(disconnectedRoot.transform, "BotPlus", "+", ServerColor, 20);
-            SetRect(plus.transform as RectTransform, new Vector2(1f, 1f), new Vector2(1f, 1f), new Vector2(1f, 1f),
-                new Vector2(-16f, -406f), new Vector2(32f, 32f));
-            plus.onClick.AddListener(OnBotPlus);
-
-            connectingLabel = CreateText(connectingRoot.transform, "Label", 16, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
+            connectingLabel = CreateText(connectingRoot.transform, "Label", 18, FontStyle.Bold, TextAnchor.MiddleLeft, Color.white);
             SetRect(connectingLabel.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0f, 1f),
                 new Vector2(16f, -86f), new Vector2(-32f, 24f));
             connectingLabel.text = "正在连接";
 
-            Button cancel = CreateButton(connectingRoot.transform, "Cancel", "取消连接", StopColor, 16);
+            Button cancel = CreateButton(connectingRoot.transform, "Cancel", "取消连接", StopColor, 17);
             SetRect(cancel.transform as RectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
                 new Vector2(0f, -118f), new Vector2(-32f, 36f));
             cancel.onClick.AddListener(OnCancel);
 
-            stopHostButton = CreateButton(connectedRoot.transform, "StopHost", "停止主机", StopColor, 15);
+            stopHostButton = CreateButton(connectedRoot.transform, "StopHost", "停止主机", StopColor, 16);
             SetRect(stopHostButton.transform as RectTransform, new Vector2(0f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 0f),
                 new Vector2(16f, 14f), new Vector2(-8f, 32f));
             stopHostButton.onClick.AddListener(OnStopHost);
 
-            stopClientButton = CreateButton(connectedRoot.transform, "StopClient", "退出房间", ServerColor, 15);
+            stopClientButton = CreateButton(connectedRoot.transform, "StopClient", "退出房间", ServerColor, 16);
             SetRect(stopClientButton.transform as RectTransform, new Vector2(0.5f, 0f), new Vector2(1f, 0f), new Vector2(1f, 0f),
                 new Vector2(-16f, 14f), new Vector2(-8f, 32f));
             stopClientButton.onClick.AddListener(() =>
@@ -552,6 +569,7 @@ namespace Brawl
             Image image = rect.gameObject.AddComponent<Image>();
             image.color = color;
             image.raycastTarget = true;
+            AddBevel(rect, true);
             Button button = rect.gameObject.AddComponent<Button>();
             button.targetGraphic = image;
             ColorBlock colors = button.colors;
@@ -562,24 +580,41 @@ namespace Brawl
             colors.fadeDuration = 0.08f;
             button.colors = colors;
 
-            Text text = CreateText(rect, "Label", fontSize, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            Color labelColor = color == HostColor ? new Color(0.10f, 0.09f, 0.04f, 1f) : Color.white;
+            bool darkLabel = color == HostColor;
+            Text text = CreateText(rect, "Label", fontSize, FontStyle.Bold, TextAnchor.MiddleCenter, labelColor, false);
             Stretch(text.rectTransform);
             text.text = label;
             text.raycastTarget = false;
-            Outline outline = text.gameObject.AddComponent<Outline>();
-            outline.effectColor = new Color(0f, 0f, 0f, 0.55f);
-            outline.effectDistance = new Vector2(1f, -1f);
+            if (!darkLabel)
+            {
+                Outline outline = text.gameObject.AddComponent<Outline>();
+                outline.effectColor = new Color(0f, 0f, 0f, 0.72f);
+                outline.effectDistance = new Vector2(1f, -1f);
+            }
             return button;
         }
 
-        InputField CreateField(Transform parent, string name, string value)
+        InputField CreateField(Transform parent, string name, string value, string placeholder = null)
         {
             RectTransform rect = CreateRect(parent, name, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
             Image image = rect.gameObject.AddComponent<Image>();
             image.color = FieldColor;
             image.raycastTarget = true;
+            AddBevel(rect, false);
 
-            Text text = CreateText(rect, "Text", 14, FontStyle.Normal, TextAnchor.MiddleLeft, Color.white);
+            Text placeholderText = null;
+            if (!string.IsNullOrEmpty(placeholder))
+            {
+                placeholderText = CreateText(rect, "Placeholder", 16, FontStyle.Normal, TextAnchor.MiddleLeft, HintColor);
+                Stretch(placeholderText.rectTransform);
+                placeholderText.rectTransform.offsetMin = new Vector2(9f, 0f);
+                placeholderText.rectTransform.offsetMax = new Vector2(-7f, 0f);
+                placeholderText.text = placeholder;
+                placeholderText.fontStyle = FontStyle.Italic;
+            }
+
+            Text text = CreateText(rect, "Text", 16, FontStyle.Normal, TextAnchor.MiddleLeft, Color.white);
             SetRect(text.rectTransform, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
             text.rectTransform.offsetMin = new Vector2(8f, 0f);
             text.rectTransform.offsetMax = new Vector2(-6f, 0f);
@@ -588,13 +623,35 @@ namespace Brawl
 
             var field = rect.gameObject.AddComponent<InputField>();
             field.textComponent = text;
+            field.placeholder = placeholderText;
             field.text = value;
             field.caretWidth = 2;
             field.selectionColor = new Color(0.28f, 0.62f, 0.92f, 0.35f);
             return field;
         }
 
-        Text CreateText(Transform parent, string name, int size, FontStyle style, TextAnchor align, Color color)
+        void AddBevel(RectTransform target, bool raised)
+        {
+            Color light = new Color(0.86f, 0.84f, 0.76f, 0.92f);
+            Color dark = new Color(0.035f, 0.04f, 0.045f, 0.92f);
+            Color topLeft = raised ? light : dark;
+            Color bottomRight = raised ? dark : light;
+
+            Image top = CreateImage(target, "BevelTop", topLeft, false);
+            SetRect(top.rectTransform, new Vector2(0f, 1f), new Vector2(1f, 1f), new Vector2(0.5f, 1f),
+                Vector2.zero, new Vector2(0f, 2f));
+            Image left = CreateImage(target, "BevelLeft", topLeft, false);
+            SetRect(left.rectTransform, new Vector2(0f, 0f), new Vector2(0f, 1f), new Vector2(0f, 0.5f),
+                Vector2.zero, new Vector2(2f, 0f));
+            Image bottom = CreateImage(target, "BevelBottom", bottomRight, false);
+            SetRect(bottom.rectTransform, new Vector2(0f, 0f), new Vector2(1f, 0f), new Vector2(0.5f, 0f),
+                Vector2.zero, new Vector2(0f, 2f));
+            Image right = CreateImage(target, "BevelRight", bottomRight, false);
+            SetRect(right.rectTransform, new Vector2(1f, 0f), new Vector2(1f, 1f), new Vector2(1f, 0.5f),
+                Vector2.zero, new Vector2(2f, 0f));
+        }
+
+        Text CreateText(Transform parent, string name, int size, FontStyle style, TextAnchor align, Color color, bool addShadow = true)
         {
             RectTransform rect = CreateRect(parent, name, Vector2.zero, Vector2.one, new Vector2(0.5f, 0.5f), Vector2.zero, Vector2.zero);
             Text text = rect.gameObject.AddComponent<Text>();
@@ -606,6 +663,12 @@ namespace Brawl
             text.raycastTarget = false;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.verticalOverflow = VerticalWrapMode.Overflow;
+            if (addShadow && color.r + color.g + color.b > 1.5f)
+            {
+                Shadow shadow = text.gameObject.AddComponent<Shadow>();
+                shadow.effectColor = new Color(0f, 0f, 0f, 0.78f);
+                shadow.effectDistance = new Vector2(1f, -1f);
+            }
             return text;
         }
 

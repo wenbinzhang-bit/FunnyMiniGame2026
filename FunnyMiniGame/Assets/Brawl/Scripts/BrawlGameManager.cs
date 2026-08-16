@@ -13,6 +13,8 @@ namespace Brawl
     /// </summary>
     public class BrawlGameManager : NetworkBehaviour
     {
+        const float RulesIntroDurationSeconds = 10f;
+
         public static BrawlGameManager Instance { get; private set; }
 
         [Tooltip("低于此高度判定掉出场地，玩家回出生点，电脑回原位")]
@@ -46,7 +48,7 @@ namespace Brawl
         [Min(1f)] public float WaitingDurationSeconds = 5f;
 
         [Tooltip("每局开局前规则说明显示秒数，到时自动消失并进入准备")]
-        [Min(1f)] public float RulesDurationSeconds = 6f;
+        [Min(1f)] public float RulesDurationSeconds = RulesIntroDurationSeconds;
 
         [Tooltip("Launcher 大厅等待其他玩家加入的秒数，到时进入第一关")]
         [Min(1f)] public float LobbyWaitSeconds = 30f;
@@ -162,6 +164,8 @@ namespace Brawl
 
         void Awake()
         {
+            // 旧 Prefab 和脚本热重载会保留曾经的 3 秒序列化值，规则页现统一固定为 10 秒。
+            RulesDurationSeconds = RulesIntroDurationSeconds;
             if (Instance != null && Instance != this)
                 return;
             Instance = this;
@@ -618,6 +622,7 @@ namespace Brawl
         {
             state = EState.Rules;
             currentLevelName = SceneManager.GetActiveScene().name;
+            RulesDurationSeconds = RulesIntroDurationSeconds;
             rulesEndsAt = NetworkTime.time + Mathf.Max(1f, RulesDurationSeconds);
             waitingEndsAt = 0;
             if (resetRank) rankText = "";

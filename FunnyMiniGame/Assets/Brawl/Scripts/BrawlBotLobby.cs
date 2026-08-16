@@ -5,15 +5,15 @@ using UnityEngine;
 namespace Brawl
 {
     /// <summary>
-    /// 开房前指定 Bot 数量。0 不创建，1-3 在 Host 成功后自动加入。
-    /// 界面由 BrawlNetworkHud 绘制，这里只保存数量。
+    /// 保存自动化测试用的开房 Bot 数量。正常大厅不再预生成 Bot，
+    /// 房主改为在准备区选择数量并点击“添加”。
     /// </summary>
     [DefaultExecutionOrder(-200)]
     public sealed class BrawlBotLobby : MonoBehaviour
     {
         public static BrawlBotLobby Instance { get; private set; }
 
-        int botCount = 1;
+        int botCount;
 
         public int BotCount => botCount;
 
