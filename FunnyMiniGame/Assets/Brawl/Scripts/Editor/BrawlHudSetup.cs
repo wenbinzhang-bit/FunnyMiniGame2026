@@ -100,7 +100,11 @@ namespace Brawl.EditorTools
             hud.TimerText = CreateText(timer, "Time", 34, TextAnchor.MiddleCenter, Color.white, font);
             hud.TimerText.fontStyle = FontStyle.Bold;
             hud.TimerText.text = "01:00";
-            SetRect(hud.TimerText.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(110f, 50f));
+            SetRect(hud.TimerText.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 8f), new Vector2(110f, 36f));
+            hud.LevelHintText = CreateText(timer, "LevelHint", 14, TextAnchor.MiddleCenter, Color.white, font);
+            hud.LevelHintText.fontStyle = FontStyle.Bold;
+            hud.LevelHintText.text = "第1/3关";
+            SetRect(hud.LevelHintText.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -16f), new Vector2(110f, 22f));
         }
 
         static BrawlMatchHud.PlayerSlot CreateSlot(Transform parent, string name, Vector2 pos, Color barColor, Sprite uiSprite, Sprite knob, Font font)

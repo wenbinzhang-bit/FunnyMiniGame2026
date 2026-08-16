@@ -58,6 +58,7 @@ namespace Brawl
 
         [Header("Top")]
         public Text TimerText;
+        public Text LevelHintText;
         public Text StatusText;
         public PlayerSlot[] Slots = new PlayerSlot[4];
 
@@ -166,6 +167,7 @@ namespace Brawl
         void EnsureSceneHudWidgets()
         {
             EnsureTurboVisuals();
+            EnsureLevelHint();
             EnsureCursorHint();
             EnsureNextRoundButton();
             EnsureRoundResultPanel();
@@ -314,6 +316,7 @@ namespace Brawl
             float remaining = gm != null ? gm.HudRemainingSeconds : 0f;
             if (TimerText != null)
                 TimerText.text = FormatTime(remaining);
+            BindLevelHint(gm);
 
             ApplyTimerWarning(gm != null && (gm.HudIsPlaying || (gm.HudIsWaiting && remaining > 0f) || gm.HudIsRoundEnd), remaining);
 
@@ -2136,6 +2139,42 @@ namespace Brawl
             rect.sizeDelta = size;
         }
 
+        void BindLevelHint(BrawlGameManager gm)
+        {
+            if (LevelHintText == null) return;
+
+            bool launcherLobby = gm != null && gm.HudIsLobby && BrawlLevelCatalog.ActiveSceneIsLauncher();
+            int index = BrawlLevelCatalog.GetLevelIndex(BrawlLevelCatalog.ActiveSceneName());
+            bool show = !launcherLobby && index >= 0;
+            LevelHintText.gameObject.SetActive(show);
+            if (show)
+                LevelHintText.text = $"第{index + 1}/{BrawlLevelCatalog.MaxLevelCount}关";
+        }
+
+        void EnsureLevelHint()
+        {
+            if (LevelHintText != null) return;
+
+            Transform timer = TimerText != null ? TimerText.transform.parent : null;
+            if (timer != null)
+            {
+                Transform existing = timer.Find("LevelHint");
+                if (existing != null)
+                    LevelHintText = existing.GetComponent<Text>();
+            }
+
+            if (LevelHintText != null) return;
+            if (timer == null) return;
+
+            Font fallbackFont = TimerText != null && TimerText.font != null
+                ? TimerText.font
+                : Resources.GetBuiltinResource<Font>("Arial.ttf");
+            LevelHintText = CreatePlainText(timer, "LevelHint", fallbackFont, 12, FontStyle.Bold, TextAnchor.MiddleCenter, Color.white);
+            LevelHintText.text = "第1/3关";
+            LevelHintText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            LevelHintText.verticalOverflow = VerticalWrapMode.Overflow;
+        }
+
         void BindCursorHint()
         {
             if (CursorHintText == null) return;
@@ -2226,8 +2265,15 @@ namespace Brawl
                     SetHudRect(fill.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(62f, 62f));
                     fill.color = new Color(0.08f, 0.085f, 0.09f, 0.78f);
                 }
-                SetHudRect(TimerText.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), Vector2.zero, new Vector2(68f, 38f));
-                TimerText.fontSize = 22;
+                SetHudRect(TimerText.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, 8f), new Vector2(68f, 28f));
+                TimerText.fontSize = 20;
+                if (LevelHintText != null)
+                {
+                    SetHudRect(LevelHintText.rectTransform, new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(0f, -14f), new Vector2(72f, 18f));
+                    LevelHintText.fontSize = 12;
+                    LevelHintText.fontStyle = FontStyle.Bold;
+                    LevelHintText.alignment = TextAnchor.MiddleCenter;
+                }
             }
 
             if (StatusText != null)
@@ -2475,6 +2521,8 @@ namespace Brawl
             }
 
             if (TimerText != null) TimerText.color = textColor;
+            if (LevelHintText != null && LevelHintText.gameObject.activeSelf)
+                LevelHintText.color = textColor;
             if (timerRing != null) timerRing.color = ringColor;
             if (timerFill != null) timerFill.color = fillColor;
         }
